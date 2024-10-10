@@ -45,7 +45,7 @@ async fn handle_connection(
     api_key: &rocket::State<String>,
     cache: &rocket::State<SharedCache>,
 ) -> Json<Value> {
-    let start_time = chrono::Utc::now();
+    let start_time = Utc::now();
 
     // Lock the cache only for the duration of this operation
     {
