@@ -578,6 +578,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hypixel_api"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "lru",
+ "lz4",
+ "reqwest",
+ "rocket",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "iana-time-zone"
 version = "0.1.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1787,20 +1801,6 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
-
-[[package]]
-name = "untitled"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "lru",
- "lz4",
- "reqwest",
- "rocket",
- "serde",
- "serde_json",
- "tokio",
-]
 
 [[package]]
 name = "url"
