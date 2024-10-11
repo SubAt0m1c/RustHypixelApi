@@ -1,4 +1,5 @@
 mod cache;
+mod format;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -11,6 +12,7 @@ use lru::LruCache;
 use chrono::{DateTime, Utc};
 
 use cache::{Cache};
+use format::format_numbers;
 
 type SharedCache = Arc<Mutex<Cache>>;
 
@@ -71,18 +73,22 @@ async fn handle_connection(
         Ok(response) => {
 
             if response.status().is_success() {
-                let json_body = response.json::<Value>().await.unwrap();
+                let response_text = response.text().await.unwrap();
+                println!("Raw response: {}", response_text);
+                let json_body = serde_json::from_str::<Value>(&response_text).unwrap();
+
+                let formatted_json = format_numbers(&json_body);
 
                 // Insert into cache
                 {
                     let mut cache_lock = cache.lock().unwrap();
-                    cache_lock.insert(uuid.to_string(), &json_body);
+                    cache_lock.insert(uuid.to_string(), &formatted_json);
                 } // Release the lock after inserting into cache
 
                 let duration = Utc::now().signed_duration_since(start_time);
                 println!("Response time for UUID {}: {} seconds", uuid, duration.num_milliseconds() as f64 / 1000.0);
 
-                Json(json_body)
+                Json(formatted_json)
             } else {
                 let duration = Utc::now().signed_duration_since(start_time);
                 println!("Response time for UUID {}: {} seconds", uuid, duration.num_milliseconds() as f64 / 1000.0);
