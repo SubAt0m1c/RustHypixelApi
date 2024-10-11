@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use lz4::{EncoderBuilder, Decoder};
 use std::io::{Read, Write};
 use lru::LruCache;

@@ -1,15 +1,11 @@
 mod cache;
 mod format;
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use rocket::{get, routes, serde::json::Json};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde_json::Value;
-use lz4::{EncoderBuilder, Decoder};
-use std::io::{Read, Write};
-use lru::LruCache;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 
 use cache::{Cache};
 use format::format_numbers;
