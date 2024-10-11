@@ -49,7 +49,7 @@ impl Cache {
         self.map.put(key.clone(), entry);
         self.current_memory_usage += entry_size; // Update memory usage
 
-        println!("{}", self.current_memory_usage)
+        println!("Current memory usage: {}", self.current_memory_usage)
     }
 
     // Evict the oldest entry

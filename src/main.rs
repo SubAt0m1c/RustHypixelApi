@@ -70,7 +70,7 @@ async fn handle_connection(
 
             if response.status().is_success() {
                 let response_text = response.text().await.unwrap();
-                println!("Raw response: {}", response_text);
+
                 let json_body = serde_json::from_str::<Value>(&response_text).unwrap();
 
                 let formatted_json = format_numbers(&json_body);
