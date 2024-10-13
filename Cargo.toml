@@ -12,3 +12,4 @@ tokio = { version = "1", features = ["full"] }
 lz4 = "1.23"    # LZ4 compression (more efficient for JSON)
 lru = "0.7"
 chrono = "0.4.38"
+dashmap = "6.1.0"

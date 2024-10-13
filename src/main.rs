@@ -1,20 +1,24 @@
 mod cache;
 mod format;
+mod rate_limit;
 
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use rocket::{get, routes, serde::json::Json};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde_json::Value;
 use chrono::Utc;
-
+use dashmap::DashMap;
 use cache::{Cache};
 use format::format_numbers;
+use rate_limit::RateLimiter;
 
 type SharedCache = Arc<Mutex<Cache>>;
 
 #[tokio::main]
 async fn main() {
     let cache = Arc::new(Mutex::new(Cache::new(300)));
+    let rate_limit: Arc<DashMap<String, (u64, Instant)>> = Arc::new(DashMap::new());
 
     let args: Vec<String> = std::env::args().collect();
 
@@ -28,7 +32,8 @@ async fn main() {
     rocket::build()
         .manage(cache)
         .manage(api_key.clone())
-        .mount("/", routes![handle_connection])
+        .manage(rate_limit)
+        .mount("/get/", routes![handle_connection])
         .launch()
         .await
         .unwrap();
@@ -36,6 +41,7 @@ async fn main() {
 
 #[get("/<uuid>")]
 async fn handle_connection(
+    _guard: RateLimiter,
     uuid: &str,
     api_key: &rocket::State<String>,
     cache: &rocket::State<SharedCache>,
