@@ -1,11 +1,9 @@
-use rocket::{catch, Request};
+use rocket::Request;
 use std::sync::Arc;
 use dashmap::DashMap;
 use std::time::{Instant, Duration};
 use rocket::http::Status;
 use rocket::outcome::Outcome;
-use rocket::serde::json::Json;
-use serde_json::Value;
 
 type RateLimit = Arc<DashMap<String, (u64, Instant)>>;
 
