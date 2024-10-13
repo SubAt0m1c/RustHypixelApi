@@ -584,6 +584,7 @@ dependencies = [
  "chrono",
  "lru",
  "lz4",
+ "regex",
  "reqwest",
  "rocket",
  "serde",

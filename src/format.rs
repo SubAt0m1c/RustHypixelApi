@@ -14,19 +14,16 @@ pub(crate) fn format_numbers(value: &Value) -> Value {
             Value::Array(new_arr)
         }
         Value::Number(num) => {
-            // Check if the number is a float and has no fractional part, then cast it to an integer
             if let Some(float_val) = num.as_f64() {
                 if float_val.fract() == 0.0 {
-                    // Safe to convert to integer
                     Value::Number(serde_json::Number::from(float_val as i64))
                 } else {
-                    // Keep as float if there is a fractional part
                     value.clone()
                 }
             } else {
-                value.clone() // If it's not a float, keep it as is
+                value.clone()
             }
         }
-        _ => value.clone(), // For other types, return the value unchanged
+        _ => value.clone(),
     }
 }
