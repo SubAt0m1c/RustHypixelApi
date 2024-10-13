@@ -9,7 +9,6 @@ use chrono::Utc;
 
 use cache::{Cache};
 use format::format_numbers;
-use regex::Regex;
 
 type SharedCache = Arc<Mutex<Cache>>;
 
