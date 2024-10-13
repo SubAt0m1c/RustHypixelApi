@@ -15,7 +15,7 @@ type SharedCache = Arc<Mutex<Cache>>;
 
 #[tokio::main]
 async fn main() {
-    let cache = Arc::new(Mutex::new(Cache::new(100)));
+    let cache = Arc::new(Mutex::new(Cache::new(300)));
 
     let args: Vec<String> = std::env::args().collect();
 

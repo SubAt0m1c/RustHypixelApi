@@ -4,7 +4,7 @@ use lru::LruCache;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-///Maximum memory usable before old values are removed (first digit is mbs)
+///Maximum memory usable before old values are removed (first digit is MBs)
 const MAX_MEMORY_USAGE: usize = 256 * 1024 * 1024;
 ///How long before the cached values are allowed to be fetched again.
 const CACHE_EXPIRATION_SECONDS: i64 = 300;
