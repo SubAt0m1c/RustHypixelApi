@@ -9,7 +9,6 @@ use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde_json::Value;
 use chrono::Utc;
 use dashmap::DashMap;
-use lru::LruCache;
 use cache::Cache;
 use format::format_numbers;
 use rate_limit::RateLimiter;
