@@ -9,7 +9,8 @@ use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde_json::Value;
 use chrono::Utc;
 use dashmap::DashMap;
-use cache::{Cache};
+use lru::LruCache;
+use cache::Cache;
 use format::format_numbers;
 use rate_limit::RateLimiter;
 
@@ -17,8 +18,8 @@ type SharedCache = Arc<Mutex<Cache>>;
 
 #[tokio::main]
 async fn main() {
-    let cache = Arc::new(Mutex::new(Cache::new(300)));
-    let rate_limit: Arc<DashMap<String, (u64, Instant)>> = Arc::new(DashMap::new());
+    let cache = Cache::create();
+    let rate_limit: Arc<DashMap<String, Vec<Instant>>> = Arc::new(DashMap::new());
 
     let args: Vec<String> = std::env::args().collect();
 

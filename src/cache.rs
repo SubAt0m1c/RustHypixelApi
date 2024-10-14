@@ -1,5 +1,6 @@
 use lz4::{EncoderBuilder, Decoder};
 use std::io::{Read, Write};
+use std::sync::{Arc, Mutex};
 use lru::LruCache;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -8,6 +9,8 @@ use serde_json::Value;
 const MAX_MEMORY_USAGE: usize = 256 * 1024 * 1024;
 ///How long before the cached values are allowed to be fetched again.
 const CACHE_EXPIRATION_SECONDS: i64 = 300;
+///Maximum entries in the cache. After the limit is reached, the oldest entries will be dropped.
+const CACHE_SIZE: usize = 300;
 
 #[derive(Debug)]
 struct CacheEntry {
@@ -27,6 +30,10 @@ impl Cache {
             map: LruCache::new(capacity),
             current_memory_usage: 0,
         }
+    }
+
+    pub fn create() -> Arc<Mutex<Cache>> {
+        Arc::new(Mutex::new(Cache::new(CACHE_SIZE)))
     }
 
     pub fn insert(&mut self, key: String, json: &Value) {
