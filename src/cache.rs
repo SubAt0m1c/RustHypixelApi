@@ -71,7 +71,10 @@ impl Cache {
             if now.signed_duration_since(entry.inserted_at).num_seconds() < CACHE_EXPIRATION_SECONDS {
                 let decompressed_data = decompress_data(&entry.data).expect("Failed to decompress data");
                 return Some(serde_json::from_slice(&decompressed_data).unwrap());
-            } else { self.map.pop(key); }
+            } else {
+                self.current_memory_usage -= entry.data.len();
+                self.map.pop(key);
+            }
         }
         None
     }
