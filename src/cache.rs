@@ -1,5 +1,6 @@
 use lz4::{EncoderBuilder, Decoder};
 use std::io::{Read, Write};
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 use lru::LruCache;
 use chrono::{DateTime, Utc};
@@ -27,7 +28,7 @@ pub struct Cache {
 impl Cache {
     pub fn new(capacity: usize) -> Self {
         Cache {
-            map: LruCache::new(capacity),
+            map: LruCache::new(NonZeroUsize::new(capacity).unwrap()),
             current_memory_usage: 0,
         }
     }

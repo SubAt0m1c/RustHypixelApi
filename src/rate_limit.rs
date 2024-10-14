@@ -29,7 +29,6 @@ impl<'r> rocket::request::FromRequest<'r> for RateLimiter {
         let now = Instant::now();
 
         let limiter = req.rocket().state::<RateLimit>().unwrap();
-
         let limiter_length = limiter.len();
 
         let client_ip = req.client_ip().map(|ip| ip.to_string()).unwrap_or_default();
