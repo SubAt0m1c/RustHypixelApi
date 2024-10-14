@@ -12,7 +12,8 @@ const REQUEST_LIMIT: u64 = 5;
 ///Window for requests to expire
 const TIME_WINDOW: Duration = Duration::from_secs(30);
 ///Entry multiple which clears the map. Ie: if the value is 25, the 25th, 50th, 75th, etc. value will clean the cache of expired entries.
-/// set to 0 to clean the map every time a value is accessed
+///
+///Set to 0 to clean the map every time a value is accessed
 const IP_THRESHOLD: usize = 25;
 ///Maximum size of the ip cache. This method technically allows a brute force to spam from different ips to effectively disable the rate limit,
 /// however I don't know a better solution that wouldn't effectively keep increasing memory usage.
@@ -46,14 +47,14 @@ impl<'r> rocket::request::FromRequest<'r> for RateLimiter {
         }
 
         if (limiter_length) % IP_THRESHOLD == 0 || limiter_length >= MAX_CACHE_SIZE {
-            clean_cache(&limiter, now);
+            clean_cache(&limiter, &now);
         }
 
         Outcome::Success(RateLimiter)
     }
 }
 
-fn clean_cache(limiter: &RateLimit, now: Instant) {
+fn clean_cache(limiter: &RateLimit, &now: &Instant) {
     let mut oldest_key: Option<String> = None;
     let mut oldest_time = now;
     let mut retained_count = 0;

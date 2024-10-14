@@ -27,6 +27,8 @@ async fn main() {
         return;
     }
 
+
+
     let api_key = &args[1];
 
     rocket::build()
