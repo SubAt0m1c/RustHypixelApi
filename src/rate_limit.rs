@@ -33,50 +33,64 @@ impl<'r> rocket::request::FromRequest<'r> for RateLimiter {
 
         let client_ip = req.client_ip().map(|ip| ip.to_string()).unwrap_or_default();
 
-        {
-            let mut entry = limiter
-                .entry(client_ip.clone())
-                .or_insert((MAXIMUM_TOKENS, now));
-            let (ref mut tokens, ref mut last_refill) = *entry.value_mut();
+        let mut entry = limiter
+            .entry(client_ip.clone())
+            .or_insert((MAXIMUM_TOKENS, now));
+        let (ref mut tokens, ref mut last_refill) = *entry.value_mut();
 
-            let time_since_last_refill = now.duration_since(*last_refill);
-            let tokens_to_add = (time_since_last_refill.as_secs_f64() / TIME_WINDOW.as_secs_f64())
-                * MAXIMUM_TOKENS as f64;
-            *tokens = (*tokens + tokens_to_add as u64).min(MAXIMUM_TOKENS);
+        let time_since_last_refill = now.duration_since(*last_refill);
+        let tokens_to_add = (time_since_last_refill.as_secs_f64() / TIME_WINDOW.as_secs_f64())
+            * MAXIMUM_TOKENS as f64;
+        *tokens = (*tokens + tokens_to_add as u64).min(MAXIMUM_TOKENS);
+
+        let outcome = if *tokens > 0 {
             *last_refill = now;
+            *tokens -= 1;
 
-            if *tokens > 0 {
-                *tokens -= 1;
-            } else {
-                return Outcome::Error((Status::TooManyRequests, ()));
-            }
-        }
+            println!("Tokens remaining: {}", tokens);
+            Outcome::Success(RateLimiter)
+        } else {
+            println!("last token refil: {}s ago", last_refill.elapsed().as_secs());
+            Outcome::Error((Status::TooManyRequests, ()))
+        };
+
+        drop(entry);
 
         if (limiter_length) % IP_THRESHOLD == 0 || limiter_length >= MAX_CACHE_SIZE {
             clean_cache(&limiter, &now);
         }
 
-        Outcome::Success(RateLimiter)
+        outcome
     }
 }
 
 fn clean_cache(limiter: &RateLimitMap, &now: &Instant) {
-    let oldest_key: Option<String> = None;
     let mut retained_count = 0;
+    let mut oldest_key: Option<String> = None;
+    let mut oldest_time = now.clone();
 
-    limiter.retain(|_, &mut (tokens, last_refill)| {
+    limiter.retain(|key, &mut (tokens, last_refill)| {
         let time_since_last_refill = now.duration_since(last_refill);
-        if tokens > 0 || time_since_last_refill < TIME_WINDOW {
-            retained_count += 1;
-            true
-        } else {
+
+        let tokens_to_add = (time_since_last_refill.as_secs_f64() / TIME_WINDOW.as_secs_f64())
+            * MAXIMUM_TOKENS as f64;
+        let total_tokens = (tokens as f64 + tokens_to_add).min(MAXIMUM_TOKENS as f64) as u64;
+
+        if total_tokens >= MAXIMUM_TOKENS {
             false
+        } else {
+            retained_count += 1;
+            if last_refill < oldest_time {
+                oldest_time = last_refill;
+                oldest_key = Some(key.clone());
+            }
+            true
         }
     });
 
     if retained_count > MAX_CACHE_SIZE {
-        if let Some(key) = oldest_key {
-            limiter.remove(&key);
+        if let Some(oldest) = oldest_key {
+            limiter.remove(&oldest);
         }
     }
 }
