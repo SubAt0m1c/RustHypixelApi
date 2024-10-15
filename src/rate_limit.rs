@@ -61,12 +61,12 @@ impl<'r> rocket::request::FromRequest<'r> for RateLimiter {
 }
 
 fn clean_cache(limiter: &RateLimitMap, &now: &Instant) {
-    let mut oldest_key: Option<String> = None;
+    let oldest_key: Option<String> = None;
     let mut retained_count = 0;
 
     limiter.retain(|_, &mut (tokens, last_refill)| {
         let time_since_last_refill = now.duration_since(last_refill);
-        if (tokens > 0 || time_since_last_refill < TIME_WINDOW) {
+        if tokens > 0 || time_since_last_refill < TIME_WINDOW {
             retained_count += 1;
             true
         } else {

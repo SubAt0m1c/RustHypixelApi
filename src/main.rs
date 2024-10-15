@@ -12,7 +12,6 @@ use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use rocket::{get, routes, serde::json::Json};
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 type SharedCache = Arc<Mutex<Cache>>;
 
