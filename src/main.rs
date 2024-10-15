@@ -2,23 +2,24 @@ mod cache;
 mod format;
 mod rate_limit;
 
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
-use rocket::{get, routes, serde::json::Json};
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
-use serde_json::Value;
+use crate::rate_limit::RateLimitMap;
+use cache::Cache;
 use chrono::Utc;
 use dashmap::DashMap;
-use cache::Cache;
 use format::format_numbers;
 use rate_limit::RateLimiter;
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
+use rocket::{get, routes, serde::json::Json};
+use serde_json::Value;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 type SharedCache = Arc<Mutex<Cache>>;
 
 #[tokio::main]
 async fn main() {
     let cache = Cache::create();
-    let rate_limit: Arc<DashMap<String, Vec<Instant>>> = Arc::new(DashMap::new());
+    let rate_limit: RateLimitMap = Arc::new(DashMap::new());
 
     let args: Vec<String> = std::env::args().collect();
 
@@ -54,21 +55,27 @@ async fn handle_connection(
         if let Some(cached_json) = cache_lock.get(uuid) {
             println!("Using cached data!");
             let duration = Utc::now().signed_duration_since(start_time);
-            println!("Response time for UUID {}: {} seconds", uuid, duration.num_milliseconds() as f64 / 1000.0);
+            println!(
+                "Response time for UUID {}: {} seconds",
+                uuid,
+                duration.num_milliseconds() as f64 / 1000.0
+            );
             return Json(cached_json);
         }
     }
 
     let client = reqwest::Client::new();
     let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_str("application/json").unwrap());
+    headers.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_str("application/json").unwrap(),
+    );
     headers.insert("API-Key", HeaderValue::from_str(api_key).unwrap());
 
     let url = format!("https://api.hypixel.net/v2/skyblock/profiles?uuid={}", uuid);
 
     match client.get(&url).headers(headers).send().await {
         Ok(response) => {
-
             if response.status().is_success() {
                 let response_text = response.text().await.unwrap();
 
@@ -82,22 +89,33 @@ async fn handle_connection(
                 }
 
                 let duration = Utc::now().signed_duration_since(start_time);
-                println!("Response time for UUID {}: {} seconds", uuid, duration.num_milliseconds() as f64 / 1000.0);
+                println!(
+                    "Response time for UUID {}: {} seconds",
+                    uuid,
+                    duration.num_milliseconds() as f64 / 1000.0
+                );
 
                 Json(formatted_json)
             } else {
                 let duration = Utc::now().signed_duration_since(start_time);
-                println!("Failed Response time for UUID {}: {} seconds", uuid, duration.num_milliseconds() as f64 / 1000.0);
+                println!(
+                    "Failed Response time for UUID {}: {} seconds",
+                    uuid,
+                    duration.num_milliseconds() as f64 / 1000.0
+                );
 
                 Json(serde_json::json!({
                     "error": format!("Request failed with status: {}", response.status())
                 }))
             }
-
         }
         Err(e) => {
             let duration = Utc::now().signed_duration_since(start_time);
-            println!("Failed Response time for UUID {}: {} seconds", uuid, duration.num_milliseconds() as f64 / 1000.0);
+            println!(
+                "Failed Response time for UUID {}: {} seconds",
+                uuid,
+                duration.num_milliseconds() as f64 / 1000.0
+            );
 
             Json(serde_json::json!({
                 "error": format!("Request failed with error: {}", e)
