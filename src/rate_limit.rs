@@ -39,18 +39,26 @@ impl<'r> rocket::request::FromRequest<'r> for RateLimiter {
         let (ref mut tokens, ref mut last_refill) = *entry.value_mut();
 
         let time_since_last_refill = now.duration_since(*last_refill);
-        let tokens_to_add = (time_since_last_refill.as_secs_f64() / TIME_WINDOW.as_secs_f64())
-            * MAXIMUM_TOKENS as f64;
-        *tokens = (*tokens + tokens_to_add as u64).min(MAXIMUM_TOKENS);
+        let tokens_to_add = ((time_since_last_refill.as_secs_f64() / TIME_WINDOW.as_secs_f64())
+            * MAXIMUM_TOKENS as f64) as u64;
+
+        if tokens_to_add > 0 {
+            *tokens = (*tokens + tokens_to_add).min(MAXIMUM_TOKENS);
+            *last_refill += Duration::from_secs_f64(
+                tokens_to_add as f64 * TIME_WINDOW.as_secs_f64() / MAXIMUM_TOKENS as f64,
+            );
+        }
+
+        println!(
+            "last token refill: {}s ago",
+            last_refill.elapsed().as_secs()
+        );
 
         let outcome = if *tokens > 0 {
-            *last_refill = now;
             *tokens -= 1;
-
             println!("Tokens remaining: {}", tokens);
             Outcome::Success(RateLimiter)
         } else {
-            println!("last token refil: {}s ago", last_refill.elapsed().as_secs());
             Outcome::Error((Status::TooManyRequests, ()))
         };
 
