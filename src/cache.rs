@@ -6,12 +6,10 @@ use std::io::{Read, Write};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
-///Maximum memory usable before old values are removed (first digit is MBs) (might be very wrong)
-const MAX_MEMORY_USAGE: usize = 256 * 1024 * 1024;
 ///How long before the cached values are allowed to be fetched again.
 const CACHE_EXPIRATION_SECONDS: i64 = 300;
 ///Maximum entries in the cache. After the limit is reached, the oldest entries will be dropped.
-const CACHE_SIZE: usize = 300;
+const CACHE_SIZE: usize = 125;
 
 #[derive(Debug)]
 pub struct CacheEntry {
@@ -22,14 +20,12 @@ pub struct CacheEntry {
 #[derive(Debug)]
 pub struct Cache {
     map: LruCache<String, CacheEntry>,
-    current_memory_usage: usize,
 }
 
 impl Cache {
     pub fn new(capacity: usize) -> Self {
         Cache {
             map: LruCache::new(NonZeroUsize::new(capacity).unwrap()),
-            current_memory_usage: 0,
         }
     }
 
@@ -42,28 +38,12 @@ impl Cache {
 
         let compressed_data = compress_data(json_str.as_bytes()).expect("Failed to compress data");
 
-        let entry_size = compressed_data.len();
-
-        while self.current_memory_usage + entry_size > MAX_MEMORY_USAGE {
-            self.evict();
-        }
-
         let entry = CacheEntry {
             data: compressed_data,
             inserted_at: Utc::now(),
         };
+
         self.map.put(key.clone(), entry);
-        self.current_memory_usage += entry_size;
-
-        println!("Current memory usage: {}", self.current_memory_usage)
-    }
-
-    fn evict(&mut self) {
-        if let Some((key, _)) = self.map.pop_lru() {
-            if let Some(entry) = self.map.get(&key) {
-                self.current_memory_usage -= entry.data.len();
-            }
-        }
     }
 
     pub fn get(&mut self, key: &str) -> Option<Value> {
@@ -75,7 +55,6 @@ impl Cache {
                     decompress_data(&entry.data).expect("Failed to decompress data");
                 return Some(serde_json::from_slice(&decompressed_data).unwrap());
             } else {
-                self.current_memory_usage -= entry.data.len();
                 self.map.pop(key);
             }
         }
