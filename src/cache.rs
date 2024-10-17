@@ -14,7 +14,7 @@ const CACHE_EXPIRATION_SECONDS: i64 = 300;
 const CACHE_SIZE: usize = 300;
 
 #[derive(Debug)]
-struct CacheEntry {
+pub struct CacheEntry {
     data: Vec<u8>,
     inserted_at: DateTime<Utc>,
 }
