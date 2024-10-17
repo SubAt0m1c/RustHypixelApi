@@ -1,12 +1,12 @@
-use lz4::{EncoderBuilder, Decoder};
+use chrono::{DateTime, Utc};
+use lru::LruCache;
+use lz4::{Decoder, EncoderBuilder};
+use serde_json::Value;
 use std::io::{Read, Write};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
-use lru::LruCache;
-use chrono::{DateTime, Utc};
-use serde_json::Value;
 
-///Maximum memory usable before old values are removed (first digit is MBs)
+///Maximum memory usable before old values are removed (first digit is MBs) (might be very wrong)
 const MAX_MEMORY_USAGE: usize = 256 * 1024 * 1024;
 ///How long before the cached values are allowed to be fetched again.
 const CACHE_EXPIRATION_SECONDS: i64 = 300;
@@ -69,8 +69,10 @@ impl Cache {
     pub fn get(&mut self, key: &str) -> Option<Value> {
         if let Some(entry) = self.map.get_mut(key) {
             let now = Utc::now();
-            if now.signed_duration_since(entry.inserted_at).num_seconds() < CACHE_EXPIRATION_SECONDS {
-                let decompressed_data = decompress_data(&entry.data).expect("Failed to decompress data");
+            if now.signed_duration_since(entry.inserted_at).num_seconds() < CACHE_EXPIRATION_SECONDS
+            {
+                let decompressed_data =
+                    decompress_data(&entry.data).expect("Failed to decompress data");
                 return Some(serde_json::from_slice(&decompressed_data).unwrap());
             } else {
                 self.current_memory_usage -= entry.data.len();

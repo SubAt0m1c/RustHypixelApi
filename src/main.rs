@@ -9,6 +9,7 @@ use dashmap::DashMap;
 use format::format_numbers;
 use rate_limit::RateLimiter;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
+use rocket::http::Status;
 use rocket::{get, routes, serde::json::Json};
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -45,7 +46,7 @@ async fn handle_connection(
     uuid: &str,
     api_key: &rocket::State<String>,
     cache: &rocket::State<SharedCache>,
-) -> Json<Value> {
+) -> Result<Json<Value>, (Status, Json<Value>)> {
     let start_time = Utc::now();
 
     {
@@ -59,7 +60,7 @@ async fn handle_connection(
                 uuid,
                 duration.num_milliseconds() as f64 / 1000.0
             );
-            return Json(cached_json);
+            return Ok(Json(cached_json));
         }
     }
 
@@ -94,7 +95,7 @@ async fn handle_connection(
                     duration.num_milliseconds() as f64 / 1000.0
                 );
 
-                Json(formatted_json)
+                Ok(Json(formatted_json))
             } else {
                 let duration = Utc::now().signed_duration_since(start_time);
                 println!(
@@ -103,9 +104,13 @@ async fn handle_connection(
                     duration.num_milliseconds() as f64 / 1000.0
                 );
 
-                Json(serde_json::json!({
-                    "error": format!("Request failed with status: {}", response.status())
-                }))
+                Err((
+                    Status::from_code(response.status().as_u16())
+                        .unwrap_or_else(|| Status::InternalServerError),
+                    Json(serde_json::json!({
+                        "error": format!("Request failed with status: {}", response.status())
+                    })),
+                ))
             }
         }
         Err(e) => {
@@ -116,9 +121,12 @@ async fn handle_connection(
                 duration.num_milliseconds() as f64 / 1000.0
             );
 
-            Json(serde_json::json!({
-                "error": format!("Request failed with error: {}", e)
-            }))
+            Err((
+                Status::InternalServerError,
+                Json(serde_json::json!({
+                    "error": format!("Failed to connect to external server: {}", e)
+                })),
+            ))
         }
     }
 }

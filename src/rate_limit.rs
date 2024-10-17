@@ -62,7 +62,7 @@ impl<'r> rocket::request::FromRequest<'r> for RateLimiter {
             Outcome::Error((Status::TooManyRequests, ()))
         };
 
-        drop(entry); // has to be dropped here otherwise clean_cache() would hang.
+        drop(entry); // entry has to be dropped here otherwise clean_cache() would hang.
 
         if (limiter_length) % IP_THRESHOLD == 0 || limiter_length >= MAX_CACHE_SIZE {
             clean_cache(&limiter, &now);
