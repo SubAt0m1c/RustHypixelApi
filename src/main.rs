@@ -18,7 +18,6 @@ type SharedCache = Arc<Mutex<Cache>>;
 async fn main() {
     let cache = Cache::create();
     let rate_limit: RateLimitMap = Arc::new(DashMap::new());
-    let secret_rate_limit: RateLimitMap = Arc::new(DashMap::new());
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {

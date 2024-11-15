@@ -1,4 +1,3 @@
-use crate::cache::Cache;
 use crate::format::format_numbers;
 use crate::rate_limit::RateLimiter;
 use crate::SharedCache;
@@ -8,7 +7,6 @@ use rocket::http::Status;
 use rocket::serde::json::{json, Json};
 use rocket::{get, State};
 use serde_json::Value;
-use std::sync::{Arc, Mutex, MutexGuard};
 
 #[get("/<uuid>")]
 pub async fn handle_players(

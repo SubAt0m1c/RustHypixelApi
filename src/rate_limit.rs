@@ -84,18 +84,22 @@ impl<'r> rocket::request::FromRequest<'r> for RateLimiter {
             );
         }
 
-        println!(
-            "last token refill: {}s ago",
-            last_refill.elapsed().as_secs()
-        );
-
         let outcome = if *tokens > 0 {
             *tokens -= 1;
-            println!("Tokens remaining: {}", tokens);
             Outcome::Success(RateLimiter)
         } else {
             Outcome::Error((Status::TooManyRequests, ()))
         };
+
+        println!(
+            "Client: {},\nTokens: profile: {} filled {}s ago | secrets: {} filled {}s ago\nRateLimitSize: {}",
+            client_ip.clone(), // used for debugging purposes.
+            entry.profile.tokens,
+            entry.profile.last_refill.elapsed().as_secs_f64(),
+            entry.secrets.tokens,
+            entry.secrets.last_refill.elapsed().as_secs_f64(),
+            limiter_length
+        );
 
         drop(entry); // entry has to be dropped here otherwise clean_cache() would hang.
 
