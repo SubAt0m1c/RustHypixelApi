@@ -1,26 +1,53 @@
+use crate::cache::Cache;
 use crate::format::format_numbers;
 use crate::rate_limit::RateLimiter;
 use crate::SharedCache;
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
-use rocket::get;
 use rocket::http::Status;
-use rocket::serde::json::Json;
+use rocket::serde::json::{json, Json};
+use rocket::{get, State};
 use serde_json::Value;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 #[get("/<uuid>")]
 pub async fn handle_players(
     _guard: RateLimiter,
     uuid: &str,
-    api_key: &rocket::State<String>,
-    cache: &rocket::State<SharedCache>,
+    api_key: &State<String>,
+    cache: &State<SharedCache>,
 ) -> Result<Json<Value>, (Status, Json<Value>)> {
+    match fetch_and_cache(uuid, api_key, &cache, Duration::minutes(5)).await {
+        Ok(data) => Ok(Json(data)),
+        Err((status, error)) => Err((status, Json(error))),
+    }
+}
+
+#[get("/<uuid>")]
+pub async fn handle_secrets(
+    _guard: RateLimiter,
+    uuid: &str,
+    api_key: &State<String>,
+    cache: &State<SharedCache>,
+) -> Result<Json<Value>, (Status, Json<Value>)> {
+    match fetch_and_cache(uuid, api_key, &cache, Duration::minutes(1)).await {
+        Ok(data) => Ok(Json(find_secrets(&data, uuid))),
+        Err((status, error)) => Err((status, Json(error))),
+    }
+}
+
+pub async fn fetch_and_cache<'a>(
+    uuid: &str,
+    api_key: &State<String>,
+    cache: &State<SharedCache>,
+    cache_duration: Duration,
+) -> Result<Value, (Status, Value)> {
     let start_time = Utc::now();
 
     {
         let mut cache_lock = cache.lock().unwrap();
 
-        if let Some(cached_json) = cache_lock.get(uuid) {
+        if let Some(cached_json) = cache_lock.get(uuid, cache_duration) {
             println!("Using cached data!");
             let duration = Utc::now().signed_duration_since(start_time);
             println!(
@@ -28,7 +55,7 @@ pub async fn handle_players(
                 uuid,
                 duration.num_milliseconds() as f64 / 1000.0
             );
-            return Ok(Json(cached_json));
+            return Ok(cached_json);
         }
     }
 
@@ -63,7 +90,7 @@ pub async fn handle_players(
                     duration.num_milliseconds() as f64 / 1000.0
                 );
 
-                Ok(Json(formatted_json))
+                Ok(formatted_json)
             } else {
                 let duration = Utc::now().signed_duration_since(start_time);
                 println!(
@@ -75,9 +102,9 @@ pub async fn handle_players(
                 Err((
                     Status::from_code(response.status().as_u16())
                         .unwrap_or_else(|| Status::InternalServerError),
-                    Json(serde_json::json!({
+                    serde_json::json!({
                         "error": format!("Request failed with status: {}", response.status())
-                    })),
+                    }),
                 ))
             }
         }
@@ -91,10 +118,26 @@ pub async fn handle_players(
 
             Err((
                 Status::InternalServerError,
-                Json(serde_json::json!({
+                serde_json::json!({
                     "error": format!("Failed to connect to external server: {}", e)
-                })),
+                }),
             ))
         }
     }
+}
+
+fn find_secrets(data: &Value, uuid: &str) -> Value {
+    data.get("profiles")
+        .and_then(|v| v.as_array())
+        .and_then(|profiles| {
+            profiles
+                .iter()
+                .find(|profile| profile.get("selected").and_then(|v| v.as_bool()) == Some(true))
+        })
+        .and_then(|selected_profile| selected_profile.get("members").and_then(|v| v.as_object()))
+        .and_then(|members| members.get(&uuid.replace("-", "")))
+        .and_then(|player_data| player_data.get("dungeons"))
+        .and_then(|dungeons| dungeons.get("secrets"))
+        .cloned()
+        .unwrap_or_else(|| json!(-1))
 }
