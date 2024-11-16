@@ -1,3 +1,4 @@
+use chrono::Utc;
 use dashmap::DashMap;
 use rocket::http::Status;
 use rocket::outcome::Outcome;
@@ -56,6 +57,11 @@ impl<'r> rocket::request::FromRequest<'r> for RateLimiter {
     async fn from_request(req: &'r Request<'_>) -> rocket::request::Outcome<Self, Self::Error> {
         let now = Instant::now();
 
+        println!(
+            "----\nrequest timestamp: {}",
+            Utc::now().with_timezone(&chrono::Local).to_rfc2822()
+        );
+
         let limiter = req.rocket().state::<RateLimitMap>().unwrap();
         let limiter_length = limiter.len();
 
@@ -92,7 +98,7 @@ impl<'r> rocket::request::FromRequest<'r> for RateLimiter {
         };
 
         println!(
-            "Client: {},\nTokens: profile: {} filled {}s ago | secrets: {} filled {}s ago\nRateLimitSize: {}",
+            "Client: {},\nTokens: profile: {} filled {}s ago | secrets: {} filled {}s ago,\nRateLimitSize: {}",
             client_ip.clone(), // used for debugging purposes.
             entry.profile.tokens,
             entry.profile.last_refill.elapsed().as_secs_f64(),
