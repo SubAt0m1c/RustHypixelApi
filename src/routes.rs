@@ -15,7 +15,14 @@ pub async fn handle_players(
     api_key: &State<String>,
     cache: &State<SharedCache>,
 ) -> Result<Json<Value>, (Status, Json<Value>)> {
-    match fetch_and_cache(uuid, api_key, &cache, Duration::minutes(5)).await {
+    match fetch_and_cache(
+        &uuid.replace("-", ""),
+        api_key,
+        &cache,
+        Duration::minutes(5),
+    )
+    .await
+    {
         Ok(data) => Ok(Json(data)),
         Err((status, error)) => Err((status, Json(error))),
     }
@@ -28,8 +35,9 @@ pub async fn handle_secrets(
     api_key: &State<String>,
     cache: &State<SharedCache>,
 ) -> Result<Json<Value>, (Status, Json<Value>)> {
-    match fetch_and_cache(uuid, api_key, &cache, Duration::minutes(1)).await {
-        Ok(data) => Ok(Json(find_secrets(&data, uuid))),
+    let fixed_uuid = &uuid.replace("-", "");
+    match fetch_and_cache(fixed_uuid, api_key, &cache, Duration::minutes(1)).await {
+        Ok(data) => Ok(Json(find_secrets(&data, fixed_uuid))),
         Err((status, error)) => Err((status, Json(error))),
     }
 }
@@ -46,12 +54,13 @@ pub async fn fetch_and_cache<'a>(
         let mut cache_lock = cache.lock().unwrap();
 
         if let Some(cached_json) = cache_lock.get(uuid, cache_duration) {
-            println!("Using cached data!");
-            let duration = Utc::now().signed_duration_since(start_time);
             println!(
-                "Response time for UUID {}: {} seconds",
+                "Cached response time for UUID {}: {} seconds",
                 uuid,
-                duration.num_milliseconds() as f64 / 1000.0
+                Utc::now()
+                    .signed_duration_since(start_time)
+                    .num_milliseconds() as f64
+                    / 1000.0
             );
             return Ok(cached_json);
         }
