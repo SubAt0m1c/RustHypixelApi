@@ -12,8 +12,6 @@ use std::sync::{Arc, Mutex};
 
 type SharedCache = Arc<Mutex<Cache>>;
 
-//todo: Secrets endpoint with lower caching and
-
 #[tokio::main]
 async fn main() {
     let cache = Cache::create();

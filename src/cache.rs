@@ -41,7 +41,7 @@ impl Cache {
             inserted_at: Utc::now(),
         };
 
-        self.map.put(key.clone(), entry);
+        self.map.put(key, entry);
     }
 
     pub fn get(&mut self, key: &str, expire: Duration) -> Option<Value> {
