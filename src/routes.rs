@@ -120,7 +120,7 @@ pub async fn fetch_and_cache(
             } else {
                 println!(
                     "Failed (Error: {}) Response time for UUID {}: {} seconds",
-                    response.status().canonical_reason(),
+                    response.status().canonical_reason().unwrap_or_default(),
                     cache_entry,
                     start_time.elapsed().as_millis() as f64 / 1000.0
                 );
