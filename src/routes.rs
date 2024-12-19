@@ -21,7 +21,7 @@ pub async fn handle_players(
         "https://api.hypixel.net/v2/skyblock/profiles?uuid={}",
         fixed_uuid
     );
-    let cache_entry = format!("{} : P", fixed_uuid);
+    let cache_entry = format!("{} by P", fixed_uuid);
 
     match fetch_and_cache(
         &url,
@@ -47,7 +47,7 @@ pub async fn handle_secrets(
 ) -> Result<Json<Value>, (Status, Json<Value>)> {
     let fixed_uuid = &uuid.replace("-", "");
     let url = format!("https://api.hypixel.net/v2/player?uuid={}", fixed_uuid);
-    let cache_entry = format!("{} : S", fixed_uuid);
+    let cache_entry = format!("{} by S", fixed_uuid);
 
     match fetch_and_cache(
         &url,
@@ -59,7 +59,10 @@ pub async fn handle_secrets(
     )
     .await
     {
-        Ok(data) => Ok(Json(data)),
+        Ok(data) => {
+            println!("Pushed data: {}", data);
+            Ok(Json(data))
+        }
         Err((status, error)) => Err((status, Json(error))),
     }
 }
@@ -116,7 +119,8 @@ pub async fn fetch_and_cache(
                 Ok(formatted_json)
             } else {
                 println!(
-                    "Failed Response time for UUID {}: {} seconds",
+                    "Failed (Error: {}) Response time for UUID {}: {} seconds",
+                    response.status().canonical_reason(),
                     cache_entry,
                     start_time.elapsed().as_millis() as f64 / 1000.0
                 );
@@ -132,7 +136,7 @@ pub async fn fetch_and_cache(
         }
         Err(e) => {
             println!(
-                "Failed Response time for UUID {}: {} seconds",
+                "Failed (Error: Failed to connect to external server!) Response time for UUID {}: {} seconds",
                 cache_entry,
                 start_time.elapsed().as_millis() as f64 / 1000.0
             );

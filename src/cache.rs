@@ -47,11 +47,13 @@ impl Cache {
     pub fn get(&mut self, key: &str, expire: Duration) -> Option<Value> {
         if let Some(entry) = self.map.get_mut(key) {
             let now = Utc::now();
-            let since_inserted = now.signed_duration_since(entry.inserted_at).num_seconds();
+            let since_inserted = now
+                .signed_duration_since(entry.inserted_at)
+                .num_milliseconds();
             println!(
-                "attempted to get cached entry at: {},\nSince Added: {}s, Cache reset expiry: {}s",
+                "Attempted to get cached entry at: {},\nSince Added: {}s, Cache reset expiry: {}s",
                 now.with_timezone(&chrono::Local).to_rfc2822(),
-                since_inserted,
+                since_inserted as f64 / 1000.0,
                 expire.num_seconds()
             );
             if since_inserted < expire.num_seconds() {
