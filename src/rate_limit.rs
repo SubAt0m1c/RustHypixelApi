@@ -3,8 +3,10 @@ use dashmap::DashMap;
 use rocket::http::Status;
 use rocket::outcome::Outcome;
 use rocket::Request;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 
 pub type RateLimitMap = Arc<DashMap<String, RateLimits>>;
 
@@ -19,6 +21,44 @@ const IP_THRESHOLD: usize = 25;
 ///Maximum size of the ip cache. This method technically allows a brute force to spam from different ips to effectively disable the rate limit,
 /// however I don't know a better solution that wouldn't effectively keep increasing memory usage.
 const MAX_CACHE_SIZE: usize = 100;
+
+pub struct RateTracker {
+    requests: AtomicU64,
+    restart_time: RwLock<Instant>,
+}
+
+impl RateTracker {
+    pub fn new() -> Self {
+        RateTracker {
+            requests: AtomicU64::new(0),
+            restart_time: RwLock::new(Instant::now()),
+        }
+    }
+
+    pub async fn requests(&self) -> u64 {
+        self.requests.load(Ordering::Relaxed)
+    }
+
+    pub async fn elapsed(&self) -> Duration {
+        self.restart_time.read().await.elapsed()
+    }
+
+    pub async fn inc(&self, start_time: &Instant) {
+        let read_time = self.restart_time.read().await;
+        let elapsed = start_time.duration_since(*read_time).as_secs();
+        if elapsed > 300 {
+            self.reset(start_time).await;
+        }
+
+        self.requests.fetch_add(1, Ordering::Relaxed);
+    }
+
+    async fn reset(&self, start_time: &Instant) {
+        self.requests.store(0, Ordering::Relaxed);
+        let mut time = self.restart_time.write().await;
+        *time = *start_time;
+    }
+}
 
 pub struct RateLimits {
     profile: RateLimit,

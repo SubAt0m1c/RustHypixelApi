@@ -56,7 +56,7 @@ impl Cache {
                 since_inserted as f64 / 1000.0,
                 expire.num_seconds()
             );
-            if since_inserted < expire.num_seconds() {
+            if since_inserted < expire.num_milliseconds() {
                 let decompressed_data =
                     decompress_data(&entry.data).expect("Failed to decompress data");
                 return Some(serde_json::from_slice(&decompressed_data).unwrap());

@@ -1,5 +1,5 @@
 use crate::format::format_numbers;
-use crate::rate_limit::RateLimiter;
+use crate::rate_limit::{RateLimiter, RateTracker};
 use crate::SharedCache;
 use chrono::Duration;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
@@ -15,6 +15,7 @@ pub async fn handle_players(
     uuid: &str,
     api_key: &State<String>,
     cache: &State<SharedCache>,
+    rate_tracker: &State<RateTracker>,
 ) -> Result<Json<Value>, (Status, Json<Value>)> {
     let fixed_uuid = &uuid.replace("-", "");
     let url = format!(
@@ -28,6 +29,7 @@ pub async fn handle_players(
         &cache_entry,
         api_key,
         &cache,
+        &rate_tracker,
         Duration::minutes(5),
         format_numbers,
     )
@@ -44,6 +46,7 @@ pub async fn handle_secrets(
     uuid: &str,
     api_key: &State<String>,
     cache: &State<SharedCache>,
+    rate_tracker: &State<RateTracker>,
 ) -> Result<Json<Value>, (Status, Json<Value>)> {
     let fixed_uuid = &uuid.replace("-", "");
     let url = format!("https://api.hypixel.net/v2/player?uuid={}", fixed_uuid);
@@ -54,6 +57,7 @@ pub async fn handle_secrets(
         &cache_entry,
         api_key,
         &cache,
+        &rate_tracker,
         Duration::minutes(1),
         find_secrets,
     )
@@ -72,6 +76,7 @@ pub async fn fetch_and_cache(
     cache_entry: &str,
     api_key: &State<String>,
     cache: &State<SharedCache>,
+    rate_tracker: &State<RateTracker>,
     cache_duration: Duration,
     cache_format: impl FnOnce(&Value) -> Value,
 ) -> Result<Value, (Status, Value)> {
@@ -88,6 +93,16 @@ pub async fn fetch_and_cache(
             );
             return Ok(cached_json);
         }
+    }
+
+    {
+        rate_tracker.inc(&start_time).await;
+
+        println!(
+            "Hypixel request #{} since {}s ago",
+            rate_tracker.requests().await,
+            rate_tracker.elapsed().await.as_secs()
+        )
     }
 
     let client = reqwest::Client::new();

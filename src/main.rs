@@ -3,7 +3,7 @@ mod format;
 mod rate_limit;
 mod routes;
 
-use crate::rate_limit::RateLimitMap;
+use crate::rate_limit::{RateLimitMap, RateTracker};
 use crate::routes::{handle_players, handle_secrets};
 use cache::Cache;
 use dashmap::DashMap;
@@ -16,6 +16,7 @@ type SharedCache = Arc<Mutex<Cache>>;
 async fn main() {
     let cache = Cache::create();
     let rate_limit: RateLimitMap = Arc::new(DashMap::new());
+    let rate_tracker: RateTracker = RateTracker::new();
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
@@ -29,6 +30,7 @@ async fn main() {
         .manage(cache)
         .manage(api_key.clone())
         .manage(rate_limit)
+        .manage(rate_tracker)
         .mount("/get/", routes![handle_players])
         .mount("/secrets/", routes![handle_secrets])
         .launch()
