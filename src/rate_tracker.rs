@@ -27,6 +27,7 @@ impl RateTracker {
         let read_time = self.restart_time.read().await;
         let elapsed = start_time.duration_since(*read_time).as_secs();
         if elapsed > 300 {
+            drop(read_time); // read_time needs to be dropped here or reset's .write() would hang.
             self.reset(start_time).await;
         }
 

@@ -8,6 +8,7 @@ use crate::rate_limit::RateLimitMap;
 use crate::routes::{handle_players, handle_secrets};
 use cache::Cache;
 use dashmap::DashMap;
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use rocket::routes;
 use std::sync::{Arc, Mutex};
 
@@ -25,11 +26,21 @@ async fn main() {
         return;
     }
 
-    let api_key = &args[1];
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_str("application/json").unwrap(),
+    );
+    headers.insert("API-Key", HeaderValue::from_str(&args[1]).unwrap());
+
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap();
 
     rocket::build()
         .manage(cache)
-        .manage(api_key.clone())
+        .manage(client)
         .manage(rate_limit)
         //.manage(rate_tracker)
         .mount("/get/", routes![handle_players])

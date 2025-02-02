@@ -3,7 +3,7 @@ use crate::rate_limit::RateLimiter;
 use crate::rate_tracker::RateTracker;
 use crate::SharedCache;
 use chrono::Duration;
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
+use reqwest::Client;
 use rocket::http::Status;
 use rocket::serde::json::{json, Json};
 use rocket::{get, State};
@@ -14,7 +14,7 @@ use std::time::Instant;
 pub async fn handle_players(
     _guard: RateLimiter,
     uuid: &str,
-    api_key: &State<String>,
+    client: &State<Client>,
     cache: &State<SharedCache>,
     //rate_tracker: &State<RateTracker>,
 ) -> Result<Json<Value>, (Status, Json<Value>)> {
@@ -28,7 +28,7 @@ pub async fn handle_players(
     match fetch_and_cache(
         &url,
         &cache_entry,
-        api_key,
+        &client,
         &cache,
         //&rate_tracker,
         Duration::minutes(5),
@@ -45,7 +45,7 @@ pub async fn handle_players(
 pub async fn handle_secrets(
     _guard: RateLimiter,
     uuid: &str,
-    api_key: &State<String>,
+    client: &State<Client>,
     cache: &State<SharedCache>,
     //rate_tracker: &State<RateTracker>,
 ) -> Result<Json<Value>, (Status, Json<Value>)> {
@@ -56,7 +56,7 @@ pub async fn handle_secrets(
     match fetch_and_cache(
         &url,
         &cache_entry,
-        api_key,
+        &client,
         &cache,
         //&rate_tracker,
         Duration::minutes(1),
@@ -75,7 +75,7 @@ pub async fn handle_secrets(
 pub async fn fetch_and_cache(
     url: &str,
     cache_entry: &str,
-    api_key: &State<String>,
+    client: &State<Client>,
     cache: &State<SharedCache>,
     //rate_tracker: &State<RateTracker>,
     cache_duration: Duration,
@@ -106,15 +106,7 @@ pub async fn fetch_and_cache(
     //     )
     // }
 
-    let client = reqwest::Client::new();
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        CONTENT_TYPE,
-        HeaderValue::from_str("application/json").unwrap(),
-    );
-    headers.insert("API-Key", HeaderValue::from_str(api_key).unwrap());
-
-    match client.get(url).headers(headers).send().await {
+    match client.get(url).send().await {
         Ok(response) => {
             if response.status().is_success() {
                 let response_text = response.text().await.unwrap();
