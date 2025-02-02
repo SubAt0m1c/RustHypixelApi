@@ -1,4 +1,4 @@
-use crate::format::format_numbers;
+use crate::format::{format_numbers, format_secrets};
 use crate::rate_limit::RateLimiter;
 use crate::rate_tracker::RateTracker;
 use crate::SharedCache;
@@ -60,7 +60,7 @@ pub async fn handle_secrets(
         &cache,
         //&rate_tracker,
         Duration::minutes(1),
-        find_secrets,
+        format_secrets,
     )
     .await
     {
@@ -157,12 +157,4 @@ pub async fn fetch_and_cache(
             ))
         }
     }
-}
-
-fn find_secrets(data: &Value) -> Value {
-    data.get("player")
-        .and_then(|player| player.get("achievements"))
-        .and_then(|achievements| achievements.get("skyblock_treasure_hunter"))
-        .cloned()
-        .unwrap_or_else(|| json!(-1))
 }

@@ -155,6 +155,7 @@ fn clean_cache(limiter: &RateLimitMap, now: &Instant) {
         keep_entry
     });
 
+    //due to purging after every entry if this is true, this should never exceed 1 here, thus only removing one oldest is fine.
     if retained_count > MAX_CACHE_SIZE {
         if let Some(oldest) = oldest_key {
             limiter.remove(&oldest);

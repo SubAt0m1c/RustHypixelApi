@@ -1,29 +1,27 @@
-use serde_json::Value;
+use rocket::serde::json::json;
+use serde_json::{Number, Value};
 
 pub(crate) fn format_numbers(value: &Value) -> Value {
     match value {
-        Value::Object(map) => {
-            let mut new_map = serde_json::Map::new();
-            for (key, val) in map {
-                new_map.insert(key.clone(), format_numbers(val));
-            }
-            Value::Object(new_map)
-        }
-        Value::Array(arr) => {
-            let new_arr: Vec<Value> = arr.iter().map(|val| format_numbers(val)).collect();
-            Value::Array(new_arr)
-        }
-        Value::Number(num) => {
-            if let Some(float_val) = num.as_f64() {
-                if float_val.fract() == 0.0 {
-                    Value::Number(serde_json::Number::from(float_val as i64))
-                } else {
-                    value.clone()
-                }
-            } else {
-                value.clone()
-            }
-        }
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), format_numbers(v)))
+                .collect(),
+        ),
+        Value::Array(arr) => Value::Array(arr.iter().map(format_numbers).collect()),
+        Value::Number(num) => num
+            .as_i64()
+            .map(Number::from)
+            .map(Value::Number)
+            .unwrap_or_else(|| value.clone()),
         _ => value.clone(),
     }
+}
+
+pub(crate) fn format_secrets(data: &Value) -> Value {
+    data.get("player")
+        .and_then(|player| player.get("achievements"))
+        .and_then(|achievements| achievements.get("skyblock_treasure_hunter"))
+        .cloned()
+        .unwrap_or_else(|| json!(-1))
 }
