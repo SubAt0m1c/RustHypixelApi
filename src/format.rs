@@ -10,7 +10,14 @@ pub(crate) fn format_numbers(value: &Value) -> Value {
         ),
         Value::Array(arr) => Value::Array(arr.iter().map(format_numbers).collect()),
         Value::Number(num) => num
-            .as_i64()
+            .as_f64()
+            .and_then(|num| {
+                if num.fract() == 0.0 {
+                    Some(num as i64)
+                } else {
+                    None
+                }
+            })
             .map(Number::from)
             .map(Value::Number)
             .unwrap_or_else(|| value.clone()),

@@ -23,11 +23,11 @@ pub async fn handle_players(
         "https://api.hypixel.net/v2/skyblock/profiles?uuid={}",
         fixed_uuid
     );
-    let cache_entry = format!("{} by P", fixed_uuid);
+    let cache_id = format!("{} by P", fixed_uuid);
 
     match fetch_and_cache(
         &url,
-        &cache_entry,
+        &cache_id,
         &client,
         &cache,
         //&rate_tracker,
@@ -51,11 +51,11 @@ pub async fn handle_secrets(
 ) -> Result<Json<Value>, (Status, Json<Value>)> {
     let fixed_uuid = &uuid.replace("-", "");
     let url = format!("https://api.hypixel.net/v2/player?uuid={}", fixed_uuid);
-    let cache_entry = format!("{} by S", fixed_uuid);
+    let cache_id = format!("{} by S", fixed_uuid);
 
     match fetch_and_cache(
         &url,
-        &cache_entry,
+        &cache_id,
         &client,
         &cache,
         //&rate_tracker,
@@ -74,7 +74,7 @@ pub async fn handle_secrets(
 
 pub async fn fetch_and_cache(
     url: &str,
-    cache_entry: &str,
+    cache_id: &str,
     client: &State<Client>,
     cache: &State<SharedCache>,
     //rate_tracker: &State<RateTracker>,
@@ -86,10 +86,10 @@ pub async fn fetch_and_cache(
     {
         let mut cache_lock = cache.lock().unwrap();
 
-        if let Some(cached_json) = cache_lock.get(cache_entry, cache_duration) {
+        if let Some(cached_json) = cache_lock.get(cache_id, cache_duration) {
             println!(
                 "Cached response time for UUID {}: {} seconds",
-                cache_entry,
+                cache_id,
                 start_time.elapsed().as_millis() as f64 / 1000.0
             );
             return Ok(cached_json);
@@ -115,12 +115,12 @@ pub async fn fetch_and_cache(
 
                 {
                     let mut cache_lock = cache.lock().unwrap();
-                    cache_lock.insert(cache_entry.to_string(), &formatted_json);
+                    cache_lock.insert(cache_id.to_string(), &formatted_json);
                 }
 
                 println!(
                     "Response time for UUID {}: {} seconds",
-                    cache_entry,
+                    cache_id,
                     start_time.elapsed().as_millis() as f64 / 1000.0
                 );
 
@@ -129,7 +129,7 @@ pub async fn fetch_and_cache(
                 println!(
                     "Failed (Error: {}) Response time for UUID {}: {} seconds",
                     response.status().canonical_reason().unwrap_or_default(),
-                    cache_entry,
+                    cache_id,
                     start_time.elapsed().as_millis() as f64 / 1000.0
                 );
 
@@ -145,7 +145,7 @@ pub async fn fetch_and_cache(
         Err(e) => {
             println!(
                 "Failed (Error: Failed to connect to external server!) Response time for UUID {}: {} seconds",
-                cache_entry,
+                cache_id,
                 start_time.elapsed().as_millis() as f64 / 1000.0
             );
 
