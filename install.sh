@@ -19,7 +19,8 @@ source "$HOME/.cargo/env"
 sudo apt install -y build-essential libssl-dev pkg-config nginx
 
 echo | sudo curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-source "$HOME/.nvm/nvm.sh"
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 nvm install 22
 
 npm install pm2 -g
@@ -44,3 +45,5 @@ EOF
 sudo systemctl restart nginx
 
 cd RustHypixelApi
+
+echo "Installation complete! See readme for usage instructions."
