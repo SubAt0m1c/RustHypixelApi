@@ -10,3 +10,19 @@ This server is somewhat built to be run on the minimum lightsail instance, which
 Increasing them may be worthwhile on larger servers.
 Its worth noting if using nginx you MUST pass client address through, otherwise the rate limit will be global and not
 per user.
+
+Installation and usage:
+
+1. git clone this repo
+2. move to the repo using `cd RustHypixelApi`
+3. sudo the install script `sudo sh install.sh` and follow its instructions
+4. build the repo with `cargo build --release`
+5. run using pm2 by running `pm2 start "cargo run --release replacetextwithapikey"`
+6. access via set url
+
+To update the server:
+
+1. move to the clone using `cd RustHypixelApi`
+2. run `git pull`
+3. rebuild the repo using `cargo build --release`
+4. run `pm2 restart 0` to restart the server

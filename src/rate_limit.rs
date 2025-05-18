@@ -8,10 +8,10 @@ use std::time::{Duration, Instant};
 
 pub type RateLimitMap = Arc<DashMap<String, RateLimits>>;
 
-///maximum tokens per [TIME_WINDOW]. One token will regenerate every [TIME_WINDOW] / [MAXIMUM_TOKENS] seconds, ex: 30s / 5 tokens = 1 token every 6 seconds, with a max of 5.
-const MAXIMUM_TOKENS: u64 = 5;
+///maximum tokens per [TIME_WINDOW]. One token will regenerate every [TIME_WINDOW] / [MAXIMUM_TOKENS] seconds, ex: 30s / 5 tokens = 1 token every 6 seconds, with a max burst of 5.
+const MAXIMUM_TOKENS: u64 = 8;
 ///Window for requests to expire
-const TIME_WINDOW: Duration = Duration::from_secs(30);
+const TIME_WINDOW: Duration = Duration::from_secs(35);
 ///Entry multiple which clears the map. Ie: if the value is 25, the 25th, 50th, 75th, etc. value will clean the cache of expired entries.
 ///
 ///Set to 0 to clean the map every time a value is accessed
