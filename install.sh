@@ -12,23 +12,18 @@ swapon /swapfile
 
 #echo to simulate an enter hit
 apt-get update
-echo | apt install rustc cargo
-# curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh -s -- -y
+curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh -s -- -y
 source "$HOME/.cargo/env"
 
-#c compilers (required by a few libraries)
-# echo | apt install build-essential //might be optional
+#c compilers (required by a few libraries), openssl stuff, and nginx
+apt install -y build-essential libssl-dev pkg-config nginx
 
-echo | apt install libssl-dev
-echo | apt install pkg-config
-
-echo | curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | sh -y
 source "$HOME/.nvm/nvm.sh"
 nvm install 22
 
 npm install pm2 -g
 
-echo | apt install nginx
 read -p "Enter the domain or IP for your server (e.g., 240.100.102.199 or urlhere.com): " domain
 
 cat <<'EOF' > /etc/nginx/conf.d/default.conf
