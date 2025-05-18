@@ -15,7 +15,7 @@ Installation and usage:
 
 1. git clone this repo
 2. move to the repo using `cd RustHypixelApi`
-3. sudo the install script `sudo sh install.sh` and follow its instructions
+3. source the script by running`source install.sh` and follow its instructions
 4. build the repo with `cargo build --release`
 5. run using pm2 by running `pm2 start "cargo run --release replacetextwithapikey"`
 6. access via set url
