@@ -11,12 +11,13 @@ swapon /swapfile
 
 
 #echo to simulate an enter hit
-curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh -s -- -y
+apt-get update
+echo | apt install rustc cargo
+# curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh -s -- -y
 source "$HOME/.cargo/env"
 
 #c compilers (required by a few libraries)
-echo | apt update
-echo | apt install build-essential
+# echo | apt install build-essential //might be optional
 
 echo | apt install libssl-dev
 echo | apt install pkg-config
