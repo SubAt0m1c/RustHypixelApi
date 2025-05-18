@@ -11,7 +11,7 @@ swapon /swapfile
 
 
 #echo to simulate an enter hit
-echo | curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh
+curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh -s -- -y
 source "$HOME/.cargo/env"
 
 #c compilers (required by a few libraries)
