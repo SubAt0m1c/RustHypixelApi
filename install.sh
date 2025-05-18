@@ -26,7 +26,7 @@ npm install pm2 -g
 
 read -p "Enter the domain or IP for your server (e.g., 240.100.102.199 or urlhere.com): " domain
 
-cat <<'EOF' > /etc/nginx/conf.d/default.conf
+sudo tee /etc/nginx/conf.d/default.conf > /dev/null <<EOF
 server {
         listen 80;
         listen [::]:80;
