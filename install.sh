@@ -13,7 +13,7 @@ swapon /swapfile
 #echo to simulate an enter hit
 apt-get update
 curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh -s -- -y
-source "$HOME/.cargo/env"
+export PATH="$HOME/.cargo/bin:$PATH"
 
 #c compilers (required by a few libraries), openssl stuff, and nginx
 apt install -y build-essential libssl-dev pkg-config nginx
