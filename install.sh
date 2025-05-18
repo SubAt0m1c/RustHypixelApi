@@ -18,7 +18,7 @@ source "$HOME/.cargo/env"
 #c compilers (required by a few libraries), openssl stuff, and nginx
 sudo apt install -y build-essential libssl-dev pkg-config nginx
 
-echo | sudo curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | sh
+echo | sudo curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 source "$HOME/.nvm/nvm.sh"
 nvm install 22
 
