@@ -4,21 +4,21 @@ set -e
 cd ~
 
 # you need like 1.5gb ram to install rust or something, so this makes a swap file to use that if its necessary. this will not persist on restart.
-dd if=/dev/zero of=/swapfile bs=1024 count=1048576
-mkswap /swapfile
-chmod 600 /swapfile
-swapon /swapfile
+sudo dd if=/dev/zero of=/swapfile bs=1024 count=1048576
+sudo mkswap /swapfile
+sudo chmod 600 /swapfile
+sudo swapon /swapfile
 
 
 #echo to simulate an enter hit
 apt-get update
-curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh -s -- -y
-export PATH="$HOME/.cargo/bin:$PATH"
+sudo curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh -s -- -y
+source "$HOME/.cargo/env"
 
 #c compilers (required by a few libraries), openssl stuff, and nginx
-apt install -y build-essential libssl-dev pkg-config nginx
+sudo apt install -y build-essential libssl-dev pkg-config nginx
 
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | sh -y
+sudo curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | sh -y
 source "$HOME/.nvm/nvm.sh"
 nvm install 22
 
@@ -41,6 +41,6 @@ server {
 }
 EOF
 
-systemctl restart nginx
+sudo systemctl restart nginx
 
 cd RustHypixelApi
