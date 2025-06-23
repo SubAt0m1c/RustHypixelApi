@@ -5,7 +5,7 @@ use std::time::Instant;
 
 pub async fn timer(
     req: ServiceRequest,
-    next: Next<impl MessageBody>
+    next: Next<impl MessageBody>,
 ) -> Result<ServiceResponse<impl MessageBody>, actix_web::Error> {
     let now = Instant::now();
     let res = next.call(req).await;
