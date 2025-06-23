@@ -13,7 +13,7 @@ sudo apt-get update
 sudo curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh -s -- -y
 source "$HOME/.cargo/env"
 
-#c compilers (required by a few libraries), openssl stuff, and nginx
+#build-essential is c compilers needed for some libraries
 sudo apt install -y build-essential libssl-dev pkg-config nginx
 
 #echo to simulate an enter hit

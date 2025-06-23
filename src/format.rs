@@ -1,7 +1,6 @@
-use rocket::serde::json::json;
-use serde_json::{Number, Value};
+use serde_json::{json, Number, Value};
 
-pub(crate) fn format_numbers(value: &Value) -> Value {
+pub fn format_numbers(value: &Value) -> Value {
     match value {
         Value::Object(map) => Value::Object(
             map.iter()
@@ -25,7 +24,7 @@ pub(crate) fn format_numbers(value: &Value) -> Value {
     }
 }
 
-pub(crate) fn format_secrets(data: &Value) -> Value {
+pub fn format_secrets(data: &Value) -> Value {
     data.get("player")
         .and_then(|player| player.get("achievements"))
         .and_then(|achievements| achievements.get("skyblock_treasure_hunter"))

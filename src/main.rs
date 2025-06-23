@@ -1,51 +1,48 @@
-mod cache;
+mod secrets;
+mod profile;
+mod fetch_and_cache;
+mod moka_cache;
 mod format;
-mod rate_limit;
-mod rate_tracker;
-mod routes;
+mod timer;
+mod lru_cache;
+mod cache_enum;
 
-use crate::rate_limit::RateLimitMap;
-use crate::routes::{handle_players, handle_secrets};
-use cache::Cache;
-use dashmap::DashMap;
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
-use rocket::routes;
-use std::sync::{Arc, Mutex};
+use crate::moka_cache::MokaCache;
+use actix_governor::{Governor, GovernorConfigBuilder};
+use actix_web::middleware::from_fn;
+use actix_web::web::Data;
+use actix_web::{App, HttpServer, Responder};
+use reqwest::header::HeaderMap;
+use reqwest::Client;
+use std::sync::Arc;
 
-type SharedCache = Arc<Mutex<Cache>>;
-
-#[tokio::main]
-async fn main() {
-    let cache = Cache::create();
-    let rate_limit: RateLimitMap = Arc::new(DashMap::new());
-    //let rate_tracker: RateTracker = RateTracker::new();
-    let args: Vec<String> = std::env::args().collect();
-
-    if args.len() < 2 {
-        eprintln!("Usage: cargo run <API_KEY>");
-        return;
-    }
-
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    let apikey = std::env::var("API_KEY").unwrap();
+    
     let mut headers = HeaderMap::new();
-    headers.insert(
-        CONTENT_TYPE,
-        HeaderValue::from_str("application/json").unwrap(),
-    );
-    headers.insert("API-Key", HeaderValue::from_str(&args[1]).unwrap());
-
-    let client = reqwest::Client::builder()
-        .default_headers(headers)
-        .build()
+    headers.insert("API-Key", apikey.parse().unwrap());
+    
+    let rate_limit = GovernorConfigBuilder::default()
+        .seconds_per_request(3)
+        .burst_size(10)
+        .finish()
         .unwrap();
-
-    rocket::build()
-        .manage(cache)
-        .manage(client)
-        .manage(rate_limit)
-        //.manage(rate_tracker)
-        .mount("/get/", routes![handle_players])
-        .mount("/secrets/", routes![handle_secrets])
-        .launch()
+    
+    // these need to be arced since the app::new() is run every time a new task or maybe thread is used. (Moka cache is internally arced)
+    let cache = cache_enum::CacheEnum::MOKA(MokaCache::new());
+    let client = Arc::new(Client::builder().default_headers(headers.clone()).build().unwrap());
+    
+    HttpServer::new(move || {
+        App::new()
+            .app_data(Data::new(cache.clone()))
+            .app_data(Data::new(client.clone()))
+            .wrap(Governor::new(&rate_limit))
+            .wrap(from_fn(timer::timer))
+            .service(secrets::secrets)
+            .service(profile::profile)
+    })
+        .bind(("127.0.0.1", 8000))?
+        .run()
         .await
-        .unwrap();
 }

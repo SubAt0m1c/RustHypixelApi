@@ -16,19 +16,19 @@ pub struct CacheEntry {
 }
 
 #[derive(Debug)]
-pub struct Cache {
+pub struct LRCache {
     map: LruCache<String, CacheEntry>,
 }
 
-impl Cache {
-    pub fn new(capacity: usize) -> Self {
-        Cache {
-            map: LruCache::new(NonZeroUsize::new(capacity).unwrap()),
+impl LRCache {
+    pub fn create(capacity: usize) -> Self {
+        LRCache {
+            map: LruCache::new(NonZeroUsize::new(capacity).unwrap()),  
         }
     }
 
-    pub fn create() -> Arc<Mutex<Cache>> {
-        Arc::new(Mutex::new(Cache::new(CACHE_SIZE)))
+    pub fn new() -> Arc<Mutex<LRCache>> {
+        Arc::new(Mutex::new(LRCache::create(CACHE_SIZE)))
     }
 
     pub fn insert(&mut self, key: String, json: &Value) {
@@ -50,12 +50,6 @@ impl Cache {
             let since_inserted = now
                 .signed_duration_since(entry.inserted_at)
                 .num_milliseconds();
-            println!(
-                "Attempted to get cached entry at: {},\nSince Added: {}s, Cache reset expiry: {}s",
-                now.with_timezone(&chrono::Local).to_rfc2822(),
-                since_inserted as f64 / 1000.0,
-                expire.num_seconds()
-            );
             if since_inserted < expire.num_milliseconds() {
                 let decompressed_data =
                     decompress_data(&entry.data).expect("Failed to decompress data");
