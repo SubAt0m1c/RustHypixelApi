@@ -20,7 +20,7 @@ impl CacheEnum {
         }
     }
 
-    pub async fn get(&self, key: &str, expire: Duration) -> Option<String> {
+    pub async fn get(&self, key: &str, expire: Duration) -> Option<Bytes> {
         match self {
             // CacheEnum::LRU(val) => {
             //     let mut locked = val.lock().unwrap();
@@ -28,9 +28,5 @@ impl CacheEnum {
             // }
             CacheEnum::MOKA(val) => val.get(key).await,
         }
-    }
-
-    pub async fn cache_raw(&self, cache_key: String, data: Bytes, duration: Duration) {
-        self.insert(cache_key, data, duration).await;
     }
 }

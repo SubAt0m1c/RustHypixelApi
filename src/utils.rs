@@ -3,7 +3,7 @@ use actix_web::{web, HttpResponse};
 use reqwest::Client;
 use std::sync::Arc;
 
-pub fn json_response(data: String) -> HttpResponse {
+pub fn json_response(data: Bytes) -> HttpResponse {
     HttpResponse::Ok()
         .append_header(("Content-Type", "application/json"))
         .body(data)

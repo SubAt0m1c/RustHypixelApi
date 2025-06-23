@@ -1,8 +1,7 @@
 use crate::cache::cache_enum::CacheEnum;
 use crate::utils::{fetch, json_response};
 use actix_web::error::ErrorInternalServerError;
-use actix_web::web::Bytes;
-use actix_web::{get, web, Responder};
+use actix_web::{get, web, HttpResponse, Responder};
 use reqwest::Client;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,11 +21,11 @@ async fn profile(
     }
 
     let bytes = fetch(url, client).await.map_err(ErrorInternalServerError)?;
-    let str = String::from_utf8_lossy(&bytes).into_owned();
+    //let str = String::from_utf8_lossy(&bytes).into_owned();
 
     cache
-        .insert(cache_key, bytes, Duration::from_secs(600))
+        .insert(cache_key, bytes.clone(), Duration::from_secs(600))
         .await;
 
-    Ok(json_response(str))
+    Ok(json_response(bytes))
 }

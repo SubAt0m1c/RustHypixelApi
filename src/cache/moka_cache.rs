@@ -61,8 +61,8 @@ impl MokaCache {
         Ok(())
     }
 
-    pub async fn get(&self, key: &str) -> Option<String> {
+    pub async fn get(&self, key: &str) -> Option<Bytes> {
         let extracted = extract_data(&self.0.get(key).await?.value).ok()?;
-        String::from_utf8(extracted).ok()
+        Some(Bytes::from(extracted))
     }
 }
