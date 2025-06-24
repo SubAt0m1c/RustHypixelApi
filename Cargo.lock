@@ -258,12 +258,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anyhow"
-version = "1.0.98"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
-
-[[package]]
 name = "async-lock"
 version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1027,11 +1021,9 @@ version = "0.1.0"
 dependencies = [
  "actix-governor",
  "actix-web",
- "anyhow",
- "bytes",
  "chrono",
  "lru",
- "lz4",
+ "lz4_flex",
  "moka",
  "reqwest",
  "serde_json",
@@ -1311,23 +1303,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "lz4"
-version = "1.28.1"
+name = "lz4_flex"
+version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a20b523e860d03443e98350ceaac5e71c6ba89aea7d960769ec3ce37f4de5af4"
-dependencies = [
- "lz4-sys",
-]
-
-[[package]]
-name = "lz4-sys"
-version = "1.11.1+lz4-1.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bd8c0d6c6ed0cd30b3652886bb8711dc4bb01d637a68105a3d5158039b418e6"
-dependencies = [
- "cc",
- "libc",
-]
+checksum = "08ab2867e3eeeca90e844d1940eab391c9dc5228783db2ed999acbc0a9ed375a"
 
 [[package]]
 name = "matchers"

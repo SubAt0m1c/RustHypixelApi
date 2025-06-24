@@ -5,13 +5,12 @@ use actix_web::web::Bytes;
 use actix_web::{get, web, HttpResponse, Responder};
 use reqwest::Client;
 use serde_json::{from_slice, json, to_vec, Value};
-use std::sync::Arc;
 use std::time::Duration;
 
 #[get("/secrets/{uuid}")]
 async fn secrets(
     path: web::Path<String>,
-    client: web::Data<Arc<Client>>,
+    client: web::Data<Client>,
     cache: web::Data<CacheEnum>,
 ) -> actix_web::Result<impl Responder> {
     let uuid = path.into_inner().replace("-", "");

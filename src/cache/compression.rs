@@ -1,18 +1,10 @@
-use lz4::{Decoder, EncoderBuilder};
+use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use std::io;
-use std::io::{Read, Write};
 
 pub fn compress_data(data: &[u8]) -> Result<Vec<u8>, io::Error> {
-    let mut encoder = EncoderBuilder::new().build(Vec::new())?;
-    encoder.write_all(data)?;
-    let (compressed, result) = encoder.finish();
-    result?;
-    Ok(compressed)
+    Ok(compress_prepend_size(data))
 }
 
 pub fn extract_data(data: &[u8]) -> Result<Vec<u8>, io::Error> {
-    let mut decoder = Decoder::new(data)?;
-    let mut result = Vec::new();
-    decoder.read_to_end(&mut result)?;
-    Ok(result)
+    decompress_size_prepended(data).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
 }

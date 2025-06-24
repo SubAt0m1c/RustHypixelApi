@@ -1,15 +1,14 @@
 use crate::cache::cache_enum::CacheEnum;
 use crate::utils::{fetch, json_response};
 use actix_web::error::ErrorInternalServerError;
-use actix_web::{get, web, HttpResponse, Responder};
+use actix_web::{get, web, Responder};
 use reqwest::Client;
-use std::sync::Arc;
 use std::time::Duration;
 
 #[get("/get/{uuid}")]
 async fn profile(
     path: web::Path<String>,
-    client: web::Data<Arc<Client>>,
+    client: web::Data<Client>,
     cache: web::Data<CacheEnum>,
 ) -> actix_web::Result<impl Responder> {
     let uuid = path.into_inner().replace("-", "");
