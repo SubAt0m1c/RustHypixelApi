@@ -1,9 +1,11 @@
 mod cache;
+mod key_extractor;
 mod routes;
 mod timer;
 mod utils;
 
 use crate::cache::moka_cache::MokaCache;
+use crate::key_extractor::RealKeyExtractor;
 use crate::routes::{profile::profile, secrets::secrets};
 use actix_governor::{Governor, GovernorConfigBuilder};
 use actix_web::middleware::from_fn;
@@ -20,6 +22,7 @@ async fn main() -> std::io::Result<()> {
     headers.insert("API-Key", apikey.parse().unwrap());
 
     let rate_limit = GovernorConfigBuilder::default()
+        .key_extractor(RealKeyExtractor)
         .seconds_per_request(3)
         .burst_size(10)
         .finish()

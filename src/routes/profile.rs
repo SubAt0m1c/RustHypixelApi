@@ -19,7 +19,9 @@ async fn profile(
         return Ok(json_response(cached));
     }
 
-    let bytes = fetch(url, client).await.map_err(ErrorInternalServerError)?;
+    let bytes = fetch(url, &client)
+        .await
+        .map_err(ErrorInternalServerError)?;
     cache
         .insert(cache_key, bytes.clone(), Duration::from_secs(600))
         .await;

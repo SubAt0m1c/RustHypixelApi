@@ -21,8 +21,10 @@ async fn secrets(
         return Ok(json_response(cached));
     }
 
-    let bytes = fetch(url, client).await.map_err(ErrorInternalServerError)?;
-    let formatted = format_secrets(from_slice::<Value>(&bytes).map_err(ErrorInternalServerError)?);
+    let bytes = fetch(url, &client)
+        .await
+        .map_err(ErrorInternalServerError)?;
+    let formatted = find_secrets(from_slice::<Value>(&bytes).map_err(ErrorInternalServerError)?);
     let byte_vec = to_vec(&formatted).map_err(ErrorInternalServerError)?;
 
     cache
@@ -32,7 +34,7 @@ async fn secrets(
     Ok(HttpResponse::Ok().json(formatted))
 }
 
-fn format_secrets(data: Value) -> Value {
+fn find_secrets(data: Value) -> Value {
     data.get("player")
         .and_then(|player| player.get("achievements"))
         .and_then(|achievements| achievements.get("skyblock_treasure_hunter"))
