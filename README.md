@@ -2,6 +2,7 @@
 
 Rust web server to proxy the hypixel api with caching and rate limiting.
 Backend is almost entirely handled by [actix-web](https://crates.io/crates/actix-web), [actix-governor](https://crates.io/crates/actix-governor) (rate limiting) and [moka](https://crates.io/crates/moka) (caching).
+Cache is compressed via [lz4](https://crates.io/crates/lz4_flex).
 
 Currently only has 2 paths, full skyblock profile via `/get/<uuid>` and accross profile secrets via achievement data at `/secrets/<uuid>`
 
