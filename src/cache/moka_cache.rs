@@ -2,12 +2,12 @@ use crate::cache::compression::{compress_data, extract_data};
 use actix_web::web::Bytes;
 use moka::future::Cache;
 use moka::Expiry;
-use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const CACHE_SIZE: u64 = 125;
 
+// arced because moka needs to clone when it gets entries.
 pub type MokaEntry = Arc<ExpireEntry>;
 
 #[derive(Clone)]
@@ -47,18 +47,10 @@ impl MokaCache {
         Self(cache)
     }
 
-    pub async fn insert(
-        &self,
-        key: String,
-        value: Bytes,
-        duration: Duration,
-    ) -> Result<(), io::Error> {
-        let compressed = compress_data(&value)?;
-
+    pub async fn insert(&self, key: String, value: Bytes, duration: Duration) {
         self.0
-            .insert(key, ExpireEntry::new(duration, compressed))
-            .await;
-        Ok(())
+            .insert(key, ExpireEntry::new(duration, compress_data(&value)))
+            .await
     }
 
     pub async fn get(&self, key: &str) -> Option<Bytes> {

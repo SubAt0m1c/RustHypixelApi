@@ -1,8 +1,8 @@
 use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use std::io;
 
-pub fn compress_data(data: &[u8]) -> Result<Vec<u8>, io::Error> {
-    Ok(compress_prepend_size(data))
+pub fn compress_data(data: &[u8]) -> Vec<u8> {
+    compress_prepend_size(data)
 }
 
 pub fn extract_data(data: &[u8]) -> Result<Vec<u8>, io::Error> {

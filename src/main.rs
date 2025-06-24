@@ -9,7 +9,6 @@ use actix_governor::{Governor, GovernorConfigBuilder};
 use actix_web::middleware::from_fn;
 use actix_web::web::Data;
 use actix_web::{App, HttpServer};
-use cache::cache_enum::CacheEnum;
 use reqwest::header::HeaderMap;
 use reqwest::Client;
 
@@ -26,7 +25,7 @@ async fn main() -> std::io::Result<()> {
         .finish()
         .unwrap();
 
-    let cache = Data::new(CacheEnum::MOKA(MokaCache::new()));
+    let cache = Data::new(MokaCache::new());
     let client = Data::new(
         Client::builder()
             .default_headers(headers.clone())
