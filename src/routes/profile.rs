@@ -1,15 +1,16 @@
 use crate::cache::moka_cache::MokaCache;
 use crate::utils::{fetch, json_response};
 use actix_web::error::ErrorInternalServerError;
-use actix_web::{get, web, Responder};
+use actix_web::web::{Data, Path};
+use actix_web::{get, Responder};
 use reqwest::Client;
 use std::time::Duration;
 
 #[get("/get/{uuid}")]
 async fn profile(
-    path: web::Path<String>,
-    client: web::Data<Client>,
-    cache: web::Data<MokaCache>,
+    path: Path<String>,
+    client: Data<Client>,
+    cache: Data<MokaCache>,
 ) -> actix_web::Result<impl Responder> {
     let uuid = path.into_inner().replace("-", "");
     let url = format!("https://api.hypixel.net/v2/skyblock/profiles?uuid={}", uuid);
