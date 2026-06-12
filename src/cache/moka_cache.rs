@@ -80,6 +80,13 @@ impl MokaCache {
 
         Self(cache)
     }
+
+    pub async fn get_or_insert_with<F>(&self, key: MokaKey, init: F) -> Option<Bytes>
+    where
+            F: Future<Output = Option<ExpireEntry>>,
+    {
+        self.0.optionally_get_with(key, init).await.map(|e| e.value)
+    }
     
     pub async fn insert(&self, key: MokaKey, value: Bytes, duration: Duration) {
         self.0
