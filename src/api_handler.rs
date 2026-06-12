@@ -28,7 +28,7 @@ impl ApiHandler {
 
     pub async fn get(&self, key: MokaKey, client: Data<Client>, processer: fn(Bytes) -> Option<Bytes>) -> Option<Bytes> {
         if let Some(data) = self.cache.get(key).await {
-            log(LogMessage::MessageAndUser { id: key.uuid(), message: "Pulled from user from cache" });
+            log(LogMessage::MessageAndUser { id: key.uuid(), message: "Pulled user from cache" });
             return Some(data)
         }
 
@@ -47,7 +47,7 @@ impl ApiHandler {
 
                 log(LogMessage::MessageAndUser { id: key.uuid(), message: "Placed user into cache" });
                 
-                if let Some(data) = req.clone() {
+                if let Some(data) = req.as_ref() {
                     internal.cache.put(key, data).await;
                 } 
                 

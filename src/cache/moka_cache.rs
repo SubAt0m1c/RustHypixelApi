@@ -21,9 +21,6 @@ static CACHE_SIZE: LazyLock<u64> = LazyLock::new(|| {
     }
 });
 
-// arced because moka needs to clone when it gets entries.
-pub type MokaEntry = Arc<ExpireEntry>;
-
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Serialize)]
 pub enum MokaKey {
     Secrets(Uuid),
@@ -54,17 +51,17 @@ pub struct ExpireEntry {
 }
 
 impl ExpireEntry {
-    pub fn new(duration: Duration, value: Bytes) -> MokaEntry {
-        Arc::new(Self { duration, value })
+    pub fn new(duration: Duration, value: Bytes) -> Self {
+        Self { duration, value }
     }
 }
 
 pub struct Expire;
-impl Expiry<MokaKey, MokaEntry> for Expire {
+impl Expiry<MokaKey, ExpireEntry> for Expire {
     fn expire_after_create(
         &self,
         _key: &MokaKey,
-        value: &MokaEntry,
+        value: &ExpireEntry,
         _created_at: Instant,
     ) -> Option<Duration> {
         Some(value.duration)
@@ -72,7 +69,7 @@ impl Expiry<MokaKey, MokaEntry> for Expire {
 }
 
 #[derive(Clone)]
-pub struct MokaCache(Cache<MokaKey, MokaEntry>);
+pub struct MokaCache(Cache<MokaKey, ExpireEntry>);
 
 impl MokaCache {
     pub fn new() -> Self {
@@ -86,12 +83,11 @@ impl MokaCache {
     
     pub async fn insert(&self, key: MokaKey, value: Bytes, duration: Duration) {
         self.0
-            .insert(key, ExpireEntry::new(duration, compress_data(&value).into()))
+            .insert(key, ExpireEntry::new(duration, value))
             .await
     }
 
     pub async fn get(&self, key: MokaKey) -> Option<Bytes> {
-        let extracted = extract_data(&self.0.get(&key).await?.value).ok()?;
-        Some(Bytes::from(extracted))
+        Some(self.0.get(&key).await?.value)
     }
 }
