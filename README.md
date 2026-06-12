@@ -1,16 +1,13 @@
 # Hypixel Api Proxy
 
 Rust web server to proxy the hypixel api with caching and rate limiting.
-Backend is almost entirely handled by [actix-web](https://crates.io/crates/actix-web), [actix-governor](https://crates.io/crates/actix-governor) (rate limiting) and [moka](https://crates.io/crates/moka) (caching).
-Cache is compressed via [lz4](https://crates.io/crates/lz4_flex).
 
 Currently only has 2 paths, full skyblock profile via `/get/<uuid>` and accross profile secrets via achievement data at `/secrets/<uuid>`
 
 Api key should be an environment variable. Per session can be set with `export API_KEY="<apikeyhere>"`
+There are various other environment variables to control caching which will be seen when they defualt and log how they are using defaults, but they arent important and should be fine left as is.
 
-While made for [HateCheaters](https://github.com/SubAt0m1c/HateCheaters), it should work just fine for any other projects as long as the expected paths are the same.
-Its built to run on a minimum lightsail instance, with a constant value for max cache entries of 125, due to low memory.
-If you intend on running this on a larger server, fork the repository and update the max cache entries to whatever you expect to use.
+While initially made for [HateCheaters](https://github.com/SubAt0m1c/HateCheaters), and now [Odin](https://github.com/odtheking/Odin), it should work just fine for any other projects as long as the expected paths are the same.
 Large players may take ~1.2mb to store all profile data in the cache (after compression).
 
 By default this is expected to be run through a reverse proxy with port 8000. You will need to pass client ip through.
