@@ -1,16 +1,25 @@
 use crate::cache::compression::{compress_data, extract_data};
 use actix_web::web::Bytes;
-use futures::StreamExt;
-use futures::stream::FuturesUnordered;
 use moka::future::Cache;
 use moka::Expiry;
 use serde::Serialize;
 use uuid::Uuid;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::env;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
-const CACHE_SIZE: u64 = 256;
+static CACHE_SIZE: LazyLock<u64> = LazyLock::new(|| {
+    let size = env::var("CACHE_SIZE");
+    match size {
+        Ok(size) => {
+            size.parse().expect("CACHE_SIZE should be a !")
+        }
+        Err(e) => {
+            eprintln!("Couldn't find environment variable for CACHE_SIZE, using 256 default. {e}");
+            256u64
+        }
+    }
+});
 
 // arced because moka needs to clone when it gets entries.
 pub type MokaEntry = Arc<ExpireEntry>;
@@ -68,7 +77,7 @@ pub struct MokaCache(Cache<MokaKey, MokaEntry>);
 impl MokaCache {
     pub fn new() -> Self {
         let cache = Cache::builder()
-            .max_capacity(CACHE_SIZE)
+            .max_capacity(*CACHE_SIZE)
             .expire_after(Expire)
             .build();
 

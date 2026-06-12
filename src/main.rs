@@ -3,11 +3,14 @@ mod key_extractor;
 mod routes;
 mod timer;
 mod utils;
+mod api_handler;
+mod logging;
 
-use crate::cache::moka_cache::MokaCache;
+use crate::api_handler::ApiHandler;
+
 use crate::key_extractor::RealKeyExtractor;
-use crate::routes::dungeon::dungeon_info;
-use crate::routes::{profile::profile, secrets::secrets};
+use crate::routes::profile::profile;
+use crate::routes::secrets::secrets;
 use actix_governor::{Governor, GovernorConfigBuilder};
 use actix_web::middleware::from_fn;
 use actix_web::web::Data;
@@ -22,6 +25,8 @@ static GLOBAL: MiMalloc = MiMalloc;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    logging::init();
+    
     let apikey = std::env::var("API_KEY").expect("no api key env variable found");
 
     let mut headers = HeaderMap::new();
@@ -34,7 +39,7 @@ async fn main() -> std::io::Result<()> {
         .finish()
         .unwrap();
 
-    let cache = Data::new(MokaCache::new());
+    let cache = Data::new(ApiHandler::new());
     let client = Data::new(
         Client::builder()
             .default_headers(headers.clone())
@@ -50,7 +55,6 @@ async fn main() -> std::io::Result<()> {
             .wrap(from_fn(timer::timer)) //println io is expensive...
             .service(secrets)
             .service(profile)
-            .service(dungeon_info)
     })
     .bind(("127.0.0.1", 8000))?
     .run()
