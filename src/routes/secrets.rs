@@ -1,10 +1,11 @@
-use crate::cache::moka_cache::{MokaCache, MokaKey};
 use crate::api_handler::ApiHandler;
+use crate::cache::cache_key::CacheKey;
+use crate::error::ProcessError;
 use crate::logging::{LogMessage, log};
-use crate::utils::{fetch, json_response};
+use crate::utils::json_response;
 use actix_web::error::ErrorInternalServerError;
 use actix_web::web::{Bytes, Data, Path};
-use actix_web::{get, HttpResponse, Responder};
+use actix_web::{get, Responder};
 use reqwest::Client;
 use serde_json::to_vec;
 use simd_json::{BorrowedValue, to_borrowed_value};
@@ -21,7 +22,7 @@ pub static SECRETS_TTL_SECONDS: LazyLock<u64> = LazyLock::new(|| {
             size.parse().expect("SECRETS_TTL_SECONDS should be a u64!")
         }
         Err(e) => {
-            eprintln!("Couldn't find environment variable for SECRETS_TTL_SECONDS, using 120 default. {e}");
+            eprintln!("Couldn't find environment variable for SECRETS_TTL_SECONDS, using 120 (2 minutes) default. {e}");
             120
         }
     }
@@ -35,14 +36,14 @@ async fn secrets(
 ) -> actix_web::Result<impl Responder> {
     let uuid = Uuid::from_str(&path.into_inner()).map_err(ErrorInternalServerError)?;
     log(LogMessage::MessageAndUser { id: uuid, message: "Requesting secret data for user" });
-    let cache_key = MokaKey::Secrets(uuid);
+    let cache_key = CacheKey::Secrets(uuid);
 
     let data = cache.get(cache_key, client, |bytes| {
         let mut vec = bytes.to_vec(); // im cryin
-        let json = to_borrowed_value(&mut vec).ok()?;
-        let formatted = find_secrets(&json)?;
-        Some(Bytes::from(to_vec(formatted).ok()?))
-    }).await.ok_or(ErrorInternalServerError("Failed somewhere trying to get secret data."))?;
+        let json = to_borrowed_value(&mut vec)?;
+        let formatted = &find_secrets(&json).ok_or(ProcessError::internal("Could not find secrets."))?;
+        Ok(Bytes::from(to_vec(formatted)?))
+    }).await?;
 
     Ok(json_response(data))
 }

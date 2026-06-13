@@ -5,6 +5,7 @@ mod timer;
 mod utils;
 mod api_handler;
 mod logging;
+mod error;
 
 use crate::api_handler::ApiHandler;
 
@@ -28,7 +29,9 @@ async fn main() -> std::io::Result<()> {
     logging::init();
     
     let apikey = std::env::var("API_KEY").expect("no api key env variable found");
-
+    let ip_addr: String = std::env::var("IP_ADDR").unwrap_or("127.0.0.1".to_string());
+    println!("Listening on {}:8000!", ip_addr);
+    
     let mut headers = HeaderMap::new();
     headers.insert("API-Key", apikey.parse().unwrap());
 
@@ -52,11 +55,11 @@ async fn main() -> std::io::Result<()> {
             .app_data(cache.clone())
             .app_data(client.clone())
             .wrap(Governor::new(&rate_limit))
-            .wrap(from_fn(timer::timer)) //println io is expensive...
+            .wrap(from_fn(timer::timer))
             .service(secrets)
             .service(profile)
     })
-    .bind(("127.0.0.1", 8000))?
+    .bind((ip_addr, 8000))?
     .run()
     .await
 }

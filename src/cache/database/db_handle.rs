@@ -1,11 +1,11 @@
-use std::{fs, path::Path, sync::{LazyLock, Once, OnceLock}, time::Duration};
+use std::{fs, sync::LazyLock, time::{Duration, Instant}};
 
-use actix_web::{cookie::time::UtcDateTime, web::Bytes as Bytes};
-use heed::{Database, Env, EnvOpenOptions, Error, byteorder::{self, ByteOrder, NativeEndian}, types::{ Bytes as ByteSlice, I64, SerdeBincode, U128}};
-use tokio::{sync::{mpsc::{UnboundedSender, unbounded_channel}, oneshot::{self, Receiver, Sender, channel, error::RecvError}}, time::{Instant, interval}};
+use actix_web::{cookie::time::UtcDateTime, web::Bytes};
+use heed::{Database, Env, EnvOpenOptions, Error, byteorder, types::{Bytes as ByteSlice, U128}};
+use tokio::{sync::{mpsc::{UnboundedSender, unbounded_channel}, oneshot::{self, error::RecvError}}, time::interval};
 use uuid::Uuid;
 
-use crate::{cache::db_entry::DbEntry, routes::profile::PROFILE_TTL_SECONDS};
+use crate::{cache::database::{batch_state::BatchState, db_entry::DbEntry, db_message::DbMessage}, routes::profile::PROFILE_DB_TTL};
 
 static ENVIRONMENT: LazyLock<Env> = LazyLock::new(|| {
     fs::create_dir_all(".db").unwrap();
@@ -21,23 +21,6 @@ const MAX_AGE_TIME: Duration = Duration::from_millis(200);
 const MAX_BATCH_SIZE: usize = 20;
 const TIMER_INTERVAL: Duration = Duration::from_millis(25);
 
-enum DbMessage {
-    Write {
-        id: Uuid,
-        data: DbEntry,
-    },
-    Read {
-        id: Uuid,
-        res: Sender<Option<Bytes>>
-    }
-}
-
-pub struct BatchState {
-    pending_writes: Vec<(Uuid, Bytes, UtcDateTime)>,
-    start_time: Option<Instant>,
-    last_write_time: Option<Instant>,
-}
-
 #[derive(Clone)]
 pub struct DbHandle {
     tx: UnboundedSender<DbMessage>
@@ -52,11 +35,7 @@ impl DbHandle {
             let database: Database<U128<byteorder::NativeEndian>, ByteSlice> = ENVIRONMENT.create_database(&mut wtxn, None).unwrap();
             wtxn.commit().expect("Should have committed initial db creation");
             
-            let mut batch_state = BatchState {
-                pending_writes: Vec::with_capacity(MAX_BATCH_SIZE), //todo: max batch size parameter
-                start_time: None,
-                last_write_time: None,
-            };
+            let mut batch_state = BatchState::new(MAX_BATCH_SIZE);
 
             let mut timer = interval(TIMER_INTERVAL);
 
@@ -94,7 +73,7 @@ impl DbHandle {
                                 match ret {
                                     Some(data) => {
                                         let (time, bytes) = DbEntry::deconstruct_slice(data);
-                                        if UtcDateTime::now() - time >= Duration::from_secs(*PROFILE_TTL_SECONDS) {
+                                        if UtcDateTime::now() - time >= Duration::from_secs(*PROFILE_DB_TTL) {
                                             res.send(None).unwrap_or_else(|_| eprintln!("Should have successfully sent response!"));
                                         } else {
                                             res.send(Some(Bytes::copy_from_slice(bytes))).unwrap_or_else(|_| eprintln!("Should have successfully sent response!"));
@@ -159,6 +138,4 @@ fn commit_batch(state: &mut BatchState, db: Database<U128<byteorder::NativeEndia
     state.last_write_time = None;
 
     Ok(())
-    
-    
 }
