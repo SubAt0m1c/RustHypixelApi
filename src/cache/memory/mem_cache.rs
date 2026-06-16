@@ -40,12 +40,11 @@ impl MemoryCache {
     //         .await
     // }
 
-    pub async fn try_get_with<F, E>(&self, key: CacheKey, init: F) -> Result<Bytes, ProcessError>
+    pub async fn try_get_with<F>(&self, key: CacheKey, init: F) -> Result<Bytes, ProcessError>
     where
-        F: Future<Output=Result<MemoryEntry, E>>,
-        E: Send + Sync + 'static
+        F: Future<Output=Result<MemoryEntry, ProcessError>>,
     {
-        self.0.try_get_with(key, init).await.map(|entry| entry.value).map_err(|_| ProcessError::internal("Failed try get with"))
+        self.0.try_get_with(key, init).await.map(|entry| entry.value).map_err(Arc::unwrap_or_clone)
     }
     
     // pub async fn get(&self, key: CacheKey) -> Option<Bytes> {

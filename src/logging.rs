@@ -24,6 +24,7 @@ pub enum LogMessage {
         id: Uuid,
         message: &'static str,
     },
+    Error(&'static str)
 }
 
 impl Display for LogMessage {
@@ -40,6 +41,9 @@ impl Display for LogMessage {
             }
             Self::MessageAndUser { id, message: field } => {
                 write!(f, "{}: {}", field, id)
+            }
+            Self::Error(msg) => {
+                write!(f, "ERROR: {}", msg)
             }
         }
     } 

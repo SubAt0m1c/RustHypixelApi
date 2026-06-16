@@ -28,7 +28,7 @@ impl CacheRouter {
 
     pub async fn get(&self, key: CacheKey, processer: fn(Bytes) -> Result<Bytes, ProcessError>) -> Result<Bytes, ProcessError> {
         // try_get_with actually handles the pending queue for us but doesnt suck at it
-        self.cache.try_get_with::<_, ProcessError>(key, async {
+        self.cache.try_get_with(key, async {
             if let CacheKey::Profile(id) = key {
                 if let Ok(Some(db_data)) = self.database.read(id).await {
                     log(LogMessage::MessageAndUser { id, message: "DB Hit" });
@@ -38,7 +38,7 @@ impl CacheRouter {
 
             let now = Instant::now();
             let raw = request(key.hypixel_url()).await.and_then(processer)?;
-            log(LogMessage::ElapsedAndUser { id: key.uuid(), elapsed: now.elapsed(), message: "Hypixel Hit" });
+            log(LogMessage::ElapsedAndUser { id: key.uuid(), elapsed: now.elapsed(), message: "Upstream Hit" });
             
             if let CacheKey::Profile(id) = key {
                 self.database.write(id, raw.clone());
