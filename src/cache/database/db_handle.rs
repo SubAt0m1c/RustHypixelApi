@@ -2,7 +2,7 @@ use std::{env, fs, io, sync::LazyLock, time::{Duration, Instant}};
 
 use actix_web::{web::Bytes};
 use heed::{Database, Env, EnvOpenOptions, byteorder, types::{Bytes as ByteSlice, U128}};
-use tokio::sync::{mpsc::{UnboundedSender, unbounded_channel}, oneshot};
+use tokio::{sync::{mpsc::{UnboundedSender, unbounded_channel}, oneshot}, task::JoinHandle};
 use uuid::Uuid;
 
 use crate::{cache::{compression::extract_data, database::{batch_state::{BatchState, WriteType}, db_message::DbMessage, timed_queue::TimedQueue}}, routes::profile::PROFILE_DB_TTL};
@@ -35,16 +35,16 @@ static ENVIRONMENT: LazyLock<Env> = LazyLock::new(|| {
     }.unwrap()
 });
 
-#[derive(Clone)]
 pub struct DbHandle {
-    tx: UnboundedSender<DbMessage>
+    tx: UnboundedSender<DbMessage>,
+    handle: JoinHandle<()>
 }
 
 impl DbHandle {
     pub fn new() -> Self {
         let (tx, mut rx) = unbounded_channel::<DbMessage>();
         
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let mut wtxn = ENVIRONMENT.write_txn().expect("Failed to get write txn init");
             let database: Database<U128<byteorder::NativeEndian>, ByteSlice> = ENVIRONMENT.create_database(&mut wtxn, None).unwrap();
             wtxn.commit().expect("Should have committed initial db creation");
@@ -85,7 +85,8 @@ impl DbHandle {
         });
         
         Self {
-            tx
+            tx,
+            handle
         }
     }
 
@@ -101,5 +102,11 @@ impl DbHandle {
         };
 
         Ok(Some(Bytes::from(extract_data(&data).map_err(io::Error::other)?)))
+    }
+}
+
+impl Drop for DbHandle {
+    fn drop(&mut self) {
+        self.handle.abort();
     }
 }

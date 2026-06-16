@@ -1,6 +1,6 @@
-use crate::api_handler::ApiHandler;
 use crate::cache::cache_key::CacheKey;
-use crate::utils::json_response;
+use crate::cache::cache_router::CacheRouter;
+use crate::request_utils::json_response;
 use actix_web::error::ErrorInternalServerError;
 use actix_web::web::{Data, Path};
 use actix_web::{get, Responder};
@@ -40,7 +40,7 @@ pub static PROFILE_CACHE_TTL: LazyLock<u64> = LazyLock::new(|| {
 #[get("/get/{uuid}")]
 async fn profile(
     path: Path<String>,
-    cache: Data<ApiHandler>,
+    cache: Data<CacheRouter>,
 ) -> actix_web::Result<impl Responder> {
     let uuid = Uuid::from_str(&path.into_inner()).map_err(ErrorInternalServerError)?;
     let cache_key = CacheKey::Profile(uuid);

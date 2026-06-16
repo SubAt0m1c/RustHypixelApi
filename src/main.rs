@@ -2,13 +2,11 @@ mod cache;
 mod key_extractor;
 mod routes;
 mod timer;
-mod utils;
-mod api_handler;
+mod request_utils;
 mod logging;
 mod error;
 
-use crate::api_handler::ApiHandler;
-
+use crate::cache::cache_router::CacheRouter;
 use crate::key_extractor::RealKeyExtractor;
 use crate::routes::profile::profile;
 use crate::routes::secrets::secrets;
@@ -40,7 +38,7 @@ async fn main() -> std::io::Result<()> {
         .finish()
         .unwrap();
 
-    let cache = Data::new(ApiHandler::new());
+    let cache = Data::new(CacheRouter::new());
 
     HttpServer::new(move || {
         App::new()

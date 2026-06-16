@@ -1,7 +1,7 @@
-use crate::api_handler::ApiHandler;
 use crate::cache::cache_key::CacheKey;
+use crate::cache::cache_router::CacheRouter;
 use crate::error::ProcessError;
-use crate::utils::json_response;
+use crate::request_utils::json_response;
 use actix_web::error::ErrorInternalServerError;
 use actix_web::web::{Bytes, Data, Path};
 use actix_web::{get, Responder};
@@ -30,7 +30,7 @@ pub static SECRETS_TTL_SECONDS: LazyLock<u64> = LazyLock::new(|| {
 #[get("/secrets/{uuid}")]
 async fn secrets(
     path: Path<String>,
-    cache: Data<ApiHandler>,
+    cache: Data<CacheRouter>,
 ) -> actix_web::Result<impl Responder> {
     let uuid = Uuid::from_str(&path.into_inner()).map_err(ErrorInternalServerError)?;
     let cache_key = CacheKey::Secrets(uuid);

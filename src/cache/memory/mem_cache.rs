@@ -1,9 +1,9 @@
-use std::{env, sync::LazyLock, time::Duration};
+use std::{env, sync::{Arc, LazyLock}, time::Duration};
 
 use actix_web::web::Bytes;
 use moka::future::Cache;
 
-use crate::cache::{cache_key::CacheKey, memory::mem_entry::{Expire, MemoryEntry}};
+use crate::{cache::{cache_key::CacheKey, memory::mem_entry::{Expire, MemoryEntry}}, error::ProcessError};
 
 /// Maximum size for the cache in megabytes.
 static CACHE_SIZE: LazyLock<u64> = LazyLock::new(|| {
@@ -34,13 +34,21 @@ impl MemoryCache {
         Self(cache)
     }
     
-    pub async fn insert(&self, key: CacheKey, value: Bytes, duration: Duration) {
-        self.0
-            .insert(key, MemoryEntry::new(duration, value))
-            .await
-    }
+    // pub async fn insert(&self, key: CacheKey, value: Bytes, duration: Duration) {
+    //     self.0
+    //         .insert(key, MemoryEntry::new(duration, value))
+    //         .await
+    // }
 
-    pub async fn get(&self, key: CacheKey) -> Option<Bytes> {
-        self.0.get(&key).await.map(|entry| entry.value)
+    pub async fn try_get_with<F, E>(&self, key: CacheKey, init: F) -> Result<Bytes, ProcessError>
+    where
+        F: Future<Output=Result<MemoryEntry, E>>,
+        E: Send + Sync + 'static
+    {
+        self.0.try_get_with(key, init).await.map(|entry| entry.value).map_err(|_| ProcessError::internal("Failed try get with"))
     }
+    
+    // pub async fn get(&self, key: CacheKey) -> Option<Bytes> {
+    //     self.0.get(&key).await.map(|entry| entry.value)
+    // }
 }

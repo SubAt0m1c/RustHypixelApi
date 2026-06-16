@@ -33,10 +33,10 @@ impl Display for LogMessage {
                 write!(f, "Time elapsed for {}: {:?}", name, elapsed)
             }
             Self::ElapsedAndUser { id, elapsed, message } => {
-                write!(f, "{}: {}, ({:?})", message, id, elapsed)
+                write!(f, "{}: {} ({:?})", message, id, elapsed)
             }
             Self::DoubleElapsed { id, first_elapsed, second_elapsed, message } => {
-                write!(f, "{}: {}, ({:?} | {:?})", message, id, first_elapsed, second_elapsed)
+                write!(f, "{}: {} ({:?} | {:?})", message, id, first_elapsed, second_elapsed)
             }
             Self::MessageAndUser { id, message: field } => {
                 write!(f, "{}: {}", field, id)
