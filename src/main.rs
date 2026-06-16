@@ -17,23 +17,21 @@ use actix_web::middleware::from_fn;
 use actix_web::web::Data;
 use actix_web::{App, HttpServer};
 use mimalloc::MiMalloc;
-use reqwest::header::HeaderMap;
-use reqwest::Client;
+use tokio::sync::OnceCell;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
+pub static API_KEY: OnceCell<String> = OnceCell::const_new();
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     logging::init();
-    
-    let apikey = std::env::var("API_KEY").expect("no api key env variable found");
+
+    let api_key = std::env::var("API_KEY").expect("no api key env variable found");
+    API_KEY.set(api_key).expect("API_KEY should be available to set!");
     let ip_addr: String = std::env::var("IP_ADDR").unwrap_or("127.0.0.1".to_string());
     println!("Listening on {}:8000!", ip_addr);
-    
-    let mut headers = HeaderMap::new();
-    headers.insert("API-Key", apikey.parse().unwrap());
 
     let rate_limit = GovernorConfigBuilder::default()
         .key_extractor(RealKeyExtractor)
@@ -43,17 +41,10 @@ async fn main() -> std::io::Result<()> {
         .unwrap();
 
     let cache = Data::new(ApiHandler::new());
-    let client = Data::new(
-        Client::builder()
-            .default_headers(headers.clone())
-            .build()
-            .unwrap(),
-    );
 
     HttpServer::new(move || {
         App::new()
             .app_data(cache.clone())
-            .app_data(client.clone())
             .wrap(Governor::new(&rate_limit))
             .wrap(from_fn(timer::timer))
             .service(secrets)

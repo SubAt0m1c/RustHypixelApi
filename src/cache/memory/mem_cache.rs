@@ -5,37 +5,33 @@ use moka::future::Cache;
 
 use crate::cache::{cache_key::CacheKey, memory::mem_entry::{Expire, MemoryEntry}};
 
+/// Maximum size for the cache in megabytes.
 static CACHE_SIZE: LazyLock<u64> = LazyLock::new(|| {
     let size = env::var("CACHE_SIZE");
     match size {
         Ok(size) => {
-            size.parse().expect("CACHE_SIZE should be a !")
+            size.parse().expect("CACHE_SIZE should be a a u64!")
         }
         Err(e) => {
-            eprintln!("Couldn't find environment variable for CACHE_SIZE, using 256 default. {e}");
-            256u64
+            eprintln!("{e}: CACHE_SIZE, using 384 (mb) default.");
+            384
         }
     }
 });
 
+/// Thin wrapper around a Moka Cache with keys and entries already defined.
 #[derive(Clone)]
 pub struct MemoryCache(Cache<CacheKey, MemoryEntry>);
 
 impl MemoryCache {
     pub fn new() -> Self {
         let cache = Cache::builder()
-            .max_capacity(*CACHE_SIZE)
+            .weigher(|_, v: &MemoryEntry| v.value.len().try_into().unwrap_or(u32::MAX))
+            .max_capacity(*CACHE_SIZE * 1024 * 1024)
             .expire_after(Expire)
             .build();
 
         Self(cache)
-    }
-
-    pub async fn get_or_insert_with<F>(&self, key: CacheKey, init: F) -> Option<Bytes>
-    where
-            F: Future<Output = Option<MemoryEntry>>,
-    {
-        self.0.optionally_get_with(key, init).await.map(|e| e.value)
     }
     
     pub async fn insert(&self, key: CacheKey, value: Bytes, duration: Duration) {
@@ -45,6 +41,6 @@ impl MemoryCache {
     }
 
     pub async fn get(&self, key: CacheKey) -> Option<Bytes> {
-        Some(self.0.get(&key).await?.value)
+        self.0.get(&key).await.map(|entry| entry.value)
     }
 }

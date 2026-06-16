@@ -1,25 +1,39 @@
-use std::{fs, sync::LazyLock, time::{Duration, Instant}};
+use std::{env, fs, io, sync::LazyLock, time::{Duration, Instant}};
 
-use actix_web::{cookie::time::UtcDateTime, web::Bytes};
-use heed::{Database, Env, EnvOpenOptions, Error, byteorder, types::{Bytes as ByteSlice, U128}};
-use tokio::{sync::{mpsc::{UnboundedSender, unbounded_channel}, oneshot::{self, error::RecvError}}, time::interval};
+use actix_web::{web::Bytes};
+use heed::{Database, Env, EnvOpenOptions, byteorder, types::{Bytes as ByteSlice, U128}};
+use tokio::sync::{mpsc::{UnboundedSender, unbounded_channel}, oneshot};
 use uuid::Uuid;
 
-use crate::{cache::database::{batch_state::BatchState, db_entry::DbEntry, db_message::DbMessage}, routes::profile::PROFILE_DB_TTL};
+use crate::{cache::{compression::extract_data, database::{batch_state::{BatchState, WriteType}, db_message::DbMessage, timed_queue::TimedQueue}}, routes::profile::PROFILE_DB_TTL};
 
-static ENVIRONMENT: LazyLock<Env> = LazyLock::new(|| {
-    fs::create_dir_all(".db").unwrap();
-    unsafe { 
-        EnvOpenOptions::new()
-            .map_size(4 * 1024 * 1024 * 1024) //4gb size
-            .open(".db") 
-    }.unwrap()
+static DB_SIZE: LazyLock<usize> = LazyLock::new(|| {
+    let size = env::var("DB_SIZE");
+    match size {
+        Ok(size) => {
+            size.parse().expect("DB_SIZE should be a usize (likely u64, could be u32)!")
+        }
+        Err(e) => {
+            eprintln!("{e}: DB_SIZE, using 4096 (mb) (4 gb) default.");
+            4096
+        }
+    }
 });
 
-const PAUSE_TIME: Duration = Duration::from_millis(50);
-const MAX_AGE_TIME: Duration = Duration::from_millis(200);
-const MAX_BATCH_SIZE: usize = 20;
-const TIMER_INTERVAL: Duration = Duration::from_millis(25);
+// this doesnt really need to be lazylock if we just move it into the db handle... shrug
+static ENVIRONMENT: LazyLock<Env> = LazyLock::new(|| {
+    let path = ".db";
+    if fs::exists(path).expect("Shouldnt have failed to verify path directory's existence.") {
+        fs::remove_dir_all(path).expect("Shouldnt have failed to remove the path directory.");
+    } // wiping on rs to keep consistency with the memory based ttl mechanism.
+    fs::create_dir_all(path).expect("Shouldnt have failed to create db directory.");
+
+    unsafe { 
+        EnvOpenOptions::new()
+            .map_size(*DB_SIZE * 1024 * 1024)
+            .open(path)
+    }.unwrap()
+});
 
 #[derive(Clone)]
 pub struct DbHandle {
@@ -35,9 +49,8 @@ impl DbHandle {
             let database: Database<U128<byteorder::NativeEndian>, ByteSlice> = ENVIRONMENT.create_database(&mut wtxn, None).unwrap();
             wtxn.commit().expect("Should have committed initial db creation");
             
-            let mut batch_state = BatchState::new(MAX_BATCH_SIZE);
-
-            let mut timer = interval(TIMER_INTERVAL);
+            let mut batch_state = BatchState::new();
+            let mut ttl_queue: TimedQueue<Uuid> = TimedQueue::new();
 
             loop {
                 tokio::select! {
@@ -49,56 +62,23 @@ impl DbHandle {
 
                         match recv {
                             DbMessage::Write { id, data } => {
-                                let now = Instant::now();
-                                
-                                if batch_state.start_time.is_none() {
-                                    batch_state.start_time = Some(now);
-                                }
-        
-                                batch_state.last_write_time = Some(now);
-                                batch_state.pending_writes.push((id, data.bytes(), UtcDateTime::now()));
-                               
-                                if batch_state.pending_writes.len() >= MAX_BATCH_SIZE {
-                                    if let Err(e) = commit_batch(&mut batch_state, database) {
-                                        eprintln!("Error committing batch: {e}");
-                                        batch_state.pending_writes.clear();
-                                        batch_state.start_time = None;
-                                        batch_state.last_write_time = None;
-                                    }
-                                }
+                                batch_state.insert(id, WriteType::Insert(data), &ENVIRONMENT, database);
+                                ttl_queue.insert(id, Instant::now() + Duration::from_secs(*PROFILE_DB_TTL))
                             }
                             DbMessage::Read { id, res } => {
                                 let rtxn = ENVIRONMENT.read_txn().expect("Should have gotten read txn!");
                                 let ret = database.get(&rtxn, &id.as_u128()).expect("Should have gotten response from db");
-                                match ret {
-                                    Some(data) => {
-                                        let (time, bytes) = DbEntry::deconstruct_slice(data);
-                                        if UtcDateTime::now() - time >= Duration::from_secs(*PROFILE_DB_TTL) {
-                                            res.send(None).unwrap_or_else(|_| eprintln!("Should have successfully sent response!"));
-                                        } else {
-                                            res.send(Some(Bytes::copy_from_slice(bytes))).unwrap_or_else(|_| eprintln!("Should have successfully sent response!"));
-                                        }
-                                    }
-                                    None => { res.send(None).unwrap_or_else(|_| eprintln!("Should have successfully sent response!")); }
-                                }
+                                res.send(ret.map(Bytes::copy_from_slice)).expect("Reciever shouldnt have been dropped!");
                             }
                         }
                     }
 
-                    _ = timer.tick() => {
-                        let now = Instant::now();
-
-                        let since_batch_start = batch_state.start_time.map_or(Duration::ZERO, |start| now.duration_since(start));
-                        let since_last_write = batch_state.last_write_time.map_or(Duration::ZERO, |last| now.duration_since(last));
-                        
-                        if since_last_write >= PAUSE_TIME || since_batch_start >= MAX_AGE_TIME {
-                            if let Err(e) = commit_batch(&mut batch_state, database) {
-                                eprintln!("Error committing batch: {e}");
-                                batch_state.pending_writes.clear();
-                                batch_state.start_time = None;
-                                batch_state.last_write_time = None;
-                            }
-                        }
+                    id = ttl_queue.recv() => {
+                        batch_state.insert(id, WriteType::Delete, &ENVIRONMENT, database);
+                    }
+                    
+                    _ = batch_state.wait_for_commit() => {
+                        batch_state.commit_checked(&ENVIRONMENT, database);
                     }
                 }
             } 
@@ -109,33 +89,17 @@ impl DbHandle {
         }
     }
 
-    pub fn write(&self, id: Uuid, data: DbEntry) {
-        let message = DbMessage::Write { id, data};
-        self.tx.send(message).expect("DB channel shouldnt close");
+    pub fn write(&self, id: Uuid, data: Bytes) {
+        self.tx.send(DbMessage::Write { id, data }).expect("DB channel shouldnt close");
     }
 
-    pub async fn read(&self, id: Uuid) -> Result<Option<Bytes>, RecvError> {
+    pub async fn read(&self, id: Uuid) -> Result<Option<Bytes>, io::Error> {
         let (tx, rx) = oneshot::channel();
-        let message = DbMessage::Read { id, res: tx };
-        self.tx.send(message).expect("DB channel shouldnt close");
-        rx.await
+        self.tx.send(DbMessage::Read { id, res: tx }).expect("DB channel shouldnt close");
+        let Some(data) = rx.await.map_err(io::Error::other)? else {
+            return Ok(None)
+        };
+
+        Ok(Some(Bytes::from(extract_data(&data).map_err(io::Error::other)?)))
     }
-}
-
-fn commit_batch(state: &mut BatchState, db: Database<U128<byteorder::NativeEndian>, ByteSlice>) -> Result<(), Error>{
-    if state.pending_writes.is_empty() {
-        return Ok(())
-    }
-
-    let mut wtxn = ENVIRONMENT.write_txn()?;
-    
-    for (id, data, _) in state.pending_writes.drain(..).into_iter() {
-        db.put(&mut wtxn, &id.as_u128(), &data)?;
-    }
-    wtxn.commit()?;
-
-    state.start_time = None;
-    state.last_write_time = None;
-
-    Ok(())
 }

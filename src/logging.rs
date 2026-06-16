@@ -9,13 +9,21 @@ pub enum LogMessage {
         elapsed: Duration,
         name: &'static str,
     },
+    ElapsedAndUser {
+        id: Uuid,
+        elapsed: Duration,
+        message: &'static str,
+    },
+    DoubleElapsed {
+        id: Uuid,
+        first_elapsed: Duration,
+        second_elapsed: Duration,
+        message: &'static str,
+    },
     MessageAndUser {
         id: Uuid,
         message: &'static str,
     },
-    AwaitingSameRequest {
-        id: Uuid,
-    }
 }
 
 impl Display for LogMessage {
@@ -24,11 +32,14 @@ impl Display for LogMessage {
             Self::TimeElapsed { elapsed, name} => {
                 write!(f, "Time elapsed for {}: {:?}", name, elapsed)
             }
+            Self::ElapsedAndUser { id, elapsed, message } => {
+                write!(f, "{}: {}, ({:?})", message, id, elapsed)
+            }
+            Self::DoubleElapsed { id, first_elapsed, second_elapsed, message } => {
+                write!(f, "{}: {}, ({:?} | {:?})", message, id, first_elapsed, second_elapsed)
+            }
             Self::MessageAndUser { id, message: field } => {
                 write!(f, "{}: {}", field, id)
-            }
-            Self::AwaitingSameRequest { id } => {
-                write!(f, "Requested same user as already being requested, id: {}", id)
             }
         }
     } 

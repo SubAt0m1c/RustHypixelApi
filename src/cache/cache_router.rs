@@ -1,49 +1,45 @@
-use std::time::Duration;
+use std::time::Instant;
 
-use actix_web::{cookie::time::UtcDateTime, web::Bytes};
+use actix_web::web::Bytes;
 
-use crate::{cache::{cache_key::CacheKey, compression::{compress_data, extract_data}, database::{db_entry::DbEntry, db_handle::DbHandle}, memory::{mem_cache::MemoryCache, mem_entry::MemoryEntry}}, routes::{profile::PROFILE_CACHE_TTL, secrets::SECRETS_TTL_SECONDS}};
+use crate::{cache::{cache_key::CacheKey, database::db_handle::DbHandle, memory::mem_cache::MemoryCache}, logging::{LogMessage, log}};
 
+/// Routes cache requests to the memory cache and db cache.
+/// Secret requests/insertions will not query the db.
 #[derive(Clone)]
 pub struct CacheRouter {
     cache: MemoryCache,
-    db_handle: DbHandle,
+    database: DbHandle,
 }
 
 impl CacheRouter {
     pub fn new() -> Self {
         Self {
             cache: MemoryCache::new(),
-            db_handle: DbHandle::new(),
+            database: DbHandle::new(),
         }
     }
 
     pub async fn put(&self, key: CacheKey, data: &Bytes) {
-        match key {
-            CacheKey::Secrets(_) => {
-                self.cache.insert(key, data.clone(), Duration::from_secs(*SECRETS_TTL_SECONDS)).await;
-            }
-            CacheKey::Profile(id) => {
-                let compressed = Bytes::from(compress_data(&data));
-                let entry = DbEntry::construct(&compressed, UtcDateTime::now());
-                self.cache.insert(key, entry.data(), Duration::from_secs(*PROFILE_CACHE_TTL)).await;
-                self.db_handle.write(id, entry);
-            }
+        self.cache.insert(key, data.clone(), key.cache_ttl()).await;
+        if let CacheKey::Profile(id) = key {
+            self.database.write(id, data.clone())
         }
     }
 
     pub async fn get(&self, key: CacheKey) -> Option<Bytes> {
-        match key {
-            CacheKey::Secrets(_) => self.cache.get(key).await,
-            CacheKey::Profile(id) => {
-                let Some(cached) = self.cache.get_or_insert_with(key, async {
-                    self.db_handle.read(id).await.expect("Should have successfully gotten a response from db.").map(|bytes| {
-                        MemoryEntry::new(Duration::from_secs(*PROFILE_CACHE_TTL), bytes)
-                    })
-                }).await else { return None };
-
-                extract_data(&cached).ok().map(Bytes::from)
-            }
+        let start = Instant::now();
+        if let Some(cached) = self.cache.get(key).await {
+            log(LogMessage::ElapsedAndUser { id: key.uuid(), elapsed: start.elapsed(), message: "Cache hit" });
+            return Some(cached)
         }
+
+        let CacheKey::Profile(id) = key else { return None };
+        let now = Instant::now();
+        let res = self.database.read(id).await.expect("Should have successfully gotten a response from db.")?;
+        let db_elapsed = now.elapsed();
+        self.cache.insert(key, res.clone(), key.cache_ttl()).await;
+        log(LogMessage::DoubleElapsed { id: key.uuid(), first_elapsed: db_elapsed, second_elapsed: start.elapsed(), message: "DB hit" });
+        Some(res)
     }
 }

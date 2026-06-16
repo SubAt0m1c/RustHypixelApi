@@ -1,20 +1,119 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use actix_web::{cookie::time::UtcDateTime, web::Bytes};
+use actix_web::web::Bytes;
+use heed::{Database, Env, Error, byteorder, types::{Bytes as ByteSlice, U128}};
+use tokio::{sync::Notify, time::sleep_until};
 use uuid::Uuid;
 
+use crate::cache::compression::compress_data;
+
+const MAX_BATCH_SIZE: usize = 20;
+const PAUSE_TIME: Duration = Duration::from_millis(50);
+const MAX_AGE_TIME: Duration = Duration::from_millis(200);
+
+pub enum WriteType {
+    Insert(Bytes),
+    Delete,
+}
+
 pub struct BatchState {
-    pub pending_writes: Vec<(Uuid, Bytes, UtcDateTime)>,
+    pub pending_writes: Vec<(Uuid, WriteType)>,
     pub start_time: Option<Instant>,
     pub last_write_time: Option<Instant>,
+    pub waker: Notify
 }
 
 impl BatchState {
-    pub fn new(size: usize) -> Self {
+    pub fn new() -> Self {
         BatchState {
-            pending_writes: Vec::with_capacity(size), //todo: max batch size parameter
+            pending_writes: Vec::with_capacity(MAX_BATCH_SIZE), //todo: max batch size parameter
             start_time: None,
             last_write_time: None,
+            waker: Notify::new()
         }
+    }
+    
+    pub fn insert(&mut self, id: Uuid, write_type: WriteType, env: &Env, db: Database<U128<byteorder::NativeEndian>, ByteSlice>) {
+        self.pending_writes.push((id, write_type));
+        self.update_time();
+       
+        if self.pending_writes.len() >= MAX_BATCH_SIZE {
+            self.commit_checked(env, db);
+        }
+    }
+
+    pub fn commit_checked(&mut self, env: &Env, db: Database<U128<byteorder::NativeEndian>, ByteSlice>) {
+        if let Err(e) = self.commit(env, db) {
+            eprintln!("Error committing batch: {e}");
+            self.pending_writes.clear();
+            self.start_time = None;
+            self.last_write_time = None;
+        }
+    }
+
+    pub async fn wait_for_commit(&self) {
+        loop {
+            let notified = self.waker.notified();
+            let Some(start) = self.start_time else {
+                notified.await;
+                continue;
+            };
+    
+            let pause_deadline =
+                self.last_write_time.unwrap_or(start) + PAUSE_TIME;
+        
+            let age_deadline = start + MAX_AGE_TIME;
+    
+            let deadline = pause_deadline.min(age_deadline);
+        
+            tokio::select! {
+                _ = sleep_until(deadline.into()) => {
+                    return
+                }
+                _ = notified => {
+                    continue
+                }
+            }
+        }
+    }
+    
+    fn update_time(&mut self) {
+        let now = Instant::now();
+        if self.start_time.is_none() {
+            self.start_time = Some(now);
+        }
+
+        self.last_write_time = Some(now);
+        self.waker.notify_one();
+    }
+
+    fn commit(&mut self, env: &Env, db: Database<U128<byteorder::NativeEndian>, ByteSlice>) -> Result<(), Error> {
+        if self.pending_writes.is_empty() {
+            return Ok(())
+        }
+
+        let mut wtxn = env.write_txn()?;
+
+        for (id, write_type) in self.pending_writes.drain(..).into_iter() {
+            let key = id.as_u128();
+            match write_type {
+                WriteType::Insert(data) => {
+                    // compression is batched here. We could put this on the user task but it would increase response times.
+                    // Leaving it just for the worker immedietly could cause subsequent writes to take longer to be put into the batch
+                    // and potentially miss an earlier batch. This solves both problems but comes at the cost of increasing the time it takes
+                    // to write a batch.
+                    db.put(&mut wtxn, &key, &compress_data(&data))?;
+                }
+                WriteType::Delete => {
+                    db.delete(&mut wtxn, &key)?;
+                }
+            }
+        }
+        wtxn.commit()?;
+    
+        self.start_time = None;
+        self.last_write_time = None;
+    
+        Ok(())
     }
 }
