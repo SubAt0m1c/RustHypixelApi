@@ -1,4 +1,4 @@
-use std::{env, sync::{Arc, LazyLock}, time::Duration};
+use std::{env, sync::{Arc, LazyLock}};
 
 use actix_web::web::Bytes;
 use moka::{future::Cache, notification::RemovalCause};
@@ -30,23 +30,14 @@ impl MemoryCache {
             .max_capacity(*CACHE_SIZE * 1024 * 1024)
             .expire_after(Expire)
             .eviction_listener(|key, _, cause| {
-                let message = match cause {
-                    RemovalCause::Size => "Entry removed due to size constraints.",
-                    RemovalCause::Expired => "Entry Expired",
-                    _ => "Entry either replaced or deleted manually"
-                };
-                log(LogMessage::MessageAndUser { id: key.uuid(), message })
+                if matches!(cause, RemovalCause::Size) {
+                    log(LogMessage::MessageAndUser { key: Arc::unwrap_or_clone(key), message: "Entry removed due to size constraints." })
+                }
             })
             .build();
 
         Self(cache)
     }
-    
-    // pub async fn insert(&self, key: CacheKey, value: Bytes, duration: Duration) {
-    //     self.0
-    //         .insert(key, MemoryEntry::new(duration, value))
-    //         .await
-    // }
 
     pub async fn try_get_with<F>(&self, key: CacheKey, init: F) -> Result<Bytes, ProcessError>
     where
@@ -54,8 +45,5 @@ impl MemoryCache {
     {
         self.0.try_get_with(key, init).await.map_err(Arc::unwrap_or_clone)
     }
-    
-    // pub async fn get(&self, key: CacheKey) -> Option<Bytes> {
-    //     self.0.get(&key).await.map(|entry| entry.value)
-    // }
+
 }

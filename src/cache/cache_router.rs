@@ -31,14 +31,14 @@ impl CacheRouter {
         self.cache.try_get_with(key, async {
             if let CacheKey::Profile(id) = key {
                 if let Ok(Some(db_data)) = self.database.read(id).await {
-                    log(LogMessage::MessageAndUser { id, message: "DB Hit" });
+                    log(LogMessage::MessageAndUser { key, message: "DB Hit" });
                     return Ok(db_data)
                 }
             }
 
             let now = Instant::now();
             let raw = request(key.hypixel_url()).await.and_then(processer)?;
-            log(LogMessage::ElapsedAndUser { id: key.uuid(), elapsed: now.elapsed(), message: "Upstream Hit" });
+            log(LogMessage::ElapsedAndUser { key, elapsed: now.elapsed(), message: "Upstream Hit" });
             
             if let CacheKey::Profile(id) = key {
                 self.database.write(id, raw.clone());

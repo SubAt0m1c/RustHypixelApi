@@ -6,20 +6,13 @@ use uuid::Uuid;
 use crate::routes::{profile::PROFILE_CACHE_TTL, secrets::SECRETS_TTL_SECONDS};
 
 /// Key used for both DB cache and memory caches.
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Serialize)]
+#[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Serialize, Debug)]
 pub enum CacheKey {
     Secrets(Uuid),
     Profile(Uuid),
 }
 
 impl CacheKey {
-    pub fn uuid(&self) -> Uuid {
-        match self {
-            Self::Profile(id) => *id,
-            Self::Secrets(id) => *id,
-        }
-    }
-
     pub fn hypixel_url(&self) -> String {
         match self {
             CacheKey::Profile(id) => format!("https://api.hypixel.net/v2/skyblock/profiles?uuid={}", id),

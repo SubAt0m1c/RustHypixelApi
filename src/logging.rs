@@ -2,7 +2,8 @@ use std::{fmt::Display, thread, time::Duration};
 
 use actix_web::cookie::time::UtcDateTime;
 use tokio::sync::{OnceCell, mpsc::{UnboundedSender, unbounded_channel}};
-use uuid::Uuid;
+
+use crate::cache::cache_key::CacheKey;
 
 pub enum LogMessage {
     TimeElapsed {
@@ -10,21 +11,14 @@ pub enum LogMessage {
         name: &'static str,
     },
     ElapsedAndUser {
-        id: Uuid,
+        key: CacheKey,
         elapsed: Duration,
         message: &'static str,
     },
-    DoubleElapsed {
-        id: Uuid,
-        first_elapsed: Duration,
-        second_elapsed: Duration,
-        message: &'static str,
-    },
     MessageAndUser {
-        id: Uuid,
+        key: CacheKey,
         message: &'static str,
     },
-    Error(&'static str)
 }
 
 impl Display for LogMessage {
@@ -33,17 +27,11 @@ impl Display for LogMessage {
             Self::TimeElapsed { elapsed, name} => {
                 write!(f, "Time elapsed for {}: {:?}", name, elapsed)
             }
-            Self::ElapsedAndUser { id, elapsed, message } => {
-                write!(f, "{}: {} ({:?})", message, id, elapsed)
+            Self::ElapsedAndUser { key, elapsed, message } => {
+                write!(f, "{}: {:?} ({:?})", message, key, elapsed)
             }
-            Self::DoubleElapsed { id, first_elapsed, second_elapsed, message } => {
-                write!(f, "{}: {} ({:?} | {:?})", message, id, first_elapsed, second_elapsed)
-            }
-            Self::MessageAndUser { id, message: field } => {
-                write!(f, "{}: {}", field, id)
-            }
-            Self::Error(msg) => {
-                write!(f, "ERROR: {}", msg)
+            Self::MessageAndUser { key, message: field } => {
+                write!(f, "{}: {:?}", field, key)
             }
         }
     } 
