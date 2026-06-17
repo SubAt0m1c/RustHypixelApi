@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use actix_web::web::Bytes;
 
-use crate::{request_utils::request, cache::{cache_key::CacheKey, database::db_handle::DbHandle, memory::{mem_cache::MemoryCache, mem_entry::MemoryEntry}}, error::ProcessError, logging::{LogMessage, log}};
+use crate::{request_utils::request, cache::{cache_key::CacheKey, database::db_handle::DbHandle, memory::mem_cache::MemoryCache}, error::ProcessError, logging::{LogMessage, log}};
 
 /// Routes cache requests to the memory cache and db cache.
 /// Secret requests/insertions will not query the db.
@@ -27,12 +27,12 @@ impl CacheRouter {
     // }
 
     pub async fn get(&self, key: CacheKey, processer: fn(Bytes) -> Result<Bytes, ProcessError>) -> Result<Bytes, ProcessError> {
-        // try_get_with actually handles the pending queue for us but doesnt suck at it
+        // try_get_with actually handles the pending queue for us and doesnt suck at it
         self.cache.try_get_with(key, async {
             if let CacheKey::Profile(id) = key {
                 if let Ok(Some(db_data)) = self.database.read(id).await {
                     log(LogMessage::MessageAndUser { id, message: "DB Hit" });
-                    return Ok(MemoryEntry::new(key.cache_ttl(), db_data))
+                    return Ok(db_data)
                 }
             }
 
@@ -44,7 +44,7 @@ impl CacheRouter {
                 self.database.write(id, raw.clone());
             }
             
-            Ok(MemoryEntry::new(key.cache_ttl(), raw))
+            Ok(raw)
         }).await
         
         // if let Some(cached) = self.cache.get(key).await {

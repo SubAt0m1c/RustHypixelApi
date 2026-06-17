@@ -5,26 +5,14 @@ use moka::Expiry;
 
 use crate::cache::cache_key::CacheKey;
 
-#[derive(Clone)]
-pub struct MemoryEntry {
-    pub duration: Duration,
-    pub value: Bytes,
-}
-
-impl MemoryEntry {
-    pub fn new(duration: Duration, value: Bytes) -> Self {
-        Self { duration, value }
-    }
-}
-
 pub struct Expire;
-impl Expiry<CacheKey, MemoryEntry> for Expire {
+impl Expiry<CacheKey, Bytes> for Expire {
     fn expire_after_create(
         &self,
-        _key: &CacheKey,
-        value: &MemoryEntry,
+        key: &CacheKey,
+        _value: &Bytes,
         _created_at: Instant,
     ) -> Option<Duration> {
-        Some(value.duration)
+        Some(key.cache_ttl())
     }
 }
