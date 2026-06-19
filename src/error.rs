@@ -1,7 +1,7 @@
 use std::{error::Error, fmt::Display};
 
-use actix_web::{ResponseError, http::StatusCode};
-use reqwest::Error as ReqwestError;
+use actix_web::{ResponseError, http::StatusCode as ActixStatusCode};
+use reqwest::{Error as ReqwestError, StatusCode};
 use simd_json::Error as SimdError;
 use serde_json::Error as SerdeError;
 
@@ -9,7 +9,7 @@ use serde_json::Error as SerdeError;
 #[derive(Clone, Debug)]
 pub enum ProcessError {
     InternalServerError(&'static str),
-    RequestError(u16),
+    RequestError(StatusCode),
     SerializationError(String),
 }
 
@@ -21,7 +21,11 @@ impl ProcessError {
 
 impl Display for ProcessError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        match self {
+            Self::InternalServerError(msg) => write!(f, "{}: {}", StatusCode::INTERNAL_SERVER_ERROR, msg),
+            Self::RequestError(error_code) => error_code.fmt(f),
+            Self::SerializationError(msg) => write!(f, "{}: {}", StatusCode::INTERNAL_SERVER_ERROR, msg),
+        }
     }
 }
 
@@ -29,7 +33,7 @@ impl Error for ProcessError {}
 
 impl From<ReqwestError> for ProcessError {
     fn from(value: ReqwestError) -> Self {
-        Self::RequestError(value.status().map(|s| s.as_u16()).unwrap_or(500))
+        Self::RequestError(value.status().unwrap_or(StatusCode::INTERNAL_SERVER_ERROR))
     }
 }
 
@@ -46,10 +50,10 @@ impl From<SerdeError> for ProcessError {
 }
 
 impl ResponseError for ProcessError {
-    fn status_code(&self) -> actix_web::http::StatusCode {
+    fn status_code(&self) -> ActixStatusCode {
         match self {
-            Self::RequestError(code) => StatusCode::from_u16(*code).expect("Status code should never be invalid!"),
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::RequestError(code) => ActixStatusCode::from_u16(code.as_u16()).unwrap_or(ActixStatusCode::INTERNAL_SERVER_ERROR),
+            _ => ActixStatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }

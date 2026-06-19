@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use actix_web::web::Bytes;
 
 use crate::{request_utils::request, cache::{cache_key::CacheKey, database::db_handle::DbHandle, memory::mem_cache::MemoryCache}, error::ProcessError, logging::{LogMessage, log}};
@@ -19,45 +17,22 @@ impl CacheRouter {
         }
     }
 
-    // pub async fn put(&self, key: CacheKey, data: &Bytes) {
-    //     self.cache.insert(key, data.clone(), key.cache_ttl()).await;
-    //     if let CacheKey::Profile(id) = key {
-    //         self.database.write(id, data.clone())
-    //     }
-    // }
-
     pub async fn get(&self, key: CacheKey, processer: fn(Bytes) -> Result<Bytes, ProcessError>) -> Result<Bytes, ProcessError> {
         // try_get_with actually handles the pending queue for us and doesnt suck at it
         self.cache.try_get_with(key, async {
-            if let CacheKey::Profile(id) = key {
-                if let Ok(Some(db_data)) = self.database.read(id).await {
-                    log(LogMessage::MessageAndUser { key, message: "DB Hit" });
-                    return Ok(db_data)
+            Ok(match key {
+                CacheKey::Profile(id) => {
+                    if let Ok(Some(db_data)) = self.database.read(id).await {
+                        log(LogMessage::MessageAndUser { key, message: "DB Hit" });
+                        return Ok(db_data)
+                    }
+
+                    let raw = request(key, format!("https://api.hypixel.net/v2/skyblock/profiles?uuid={}", id)).await.and_then(processer)?;
+                    self.database.write(id, raw.clone());
+                    raw
                 }
-            }
-
-            let now = Instant::now();
-            let raw = request(key.hypixel_url()).await.and_then(processer)?;
-            log(LogMessage::ElapsedAndUser { key, elapsed: now.elapsed(), message: "Upstream Hit" });
-            
-            if let CacheKey::Profile(id) = key {
-                self.database.write(id, raw.clone());
-            }
-            
-            Ok(raw)
+                CacheKey::Secrets(id) => request(key, format!("https://api.hypixel.net/v2/player?uuid={}", id)).await.and_then(processer)?,
+            })
         }).await
-        
-        // if let Some(cached) = self.cache.get(key).await {
-        //     log(LogMessage::ElapsedAndUser { id: key.uuid(), elapsed: start.elapsed(), message: "Cache hit" });
-        //     return Some(cached)
-        // }
-
-        // let CacheKey::Profile(id) = key else { return None };
-        // let now = Instant::now();
-        // let res = self.database.read(id).await.expect("Should have successfully gotten a response from db.")?;
-        // let db_elapsed = now.elapsed();
-        // self.cache.insert(key, res.clone(), key.cache_ttl()).await;
-        // log(LogMessage::DoubleElapsed { id: key.uuid(), first_elapsed: db_elapsed, second_elapsed: start.elapsed(), message: "DB hit" });
-        // Some(res)
     }
 }

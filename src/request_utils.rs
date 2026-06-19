@@ -4,9 +4,12 @@ use actix_web::http::header::ContentType;
 use actix_web::web::Bytes;
 use actix_web::{mime, HttpResponse};
 use reqwest::{header:: HeaderMap, Client};
+use tokio::time::Instant;
 
 use crate::API_KEY;
+use crate::cache::cache_key::CacheKey;
 use crate::error::ProcessError;
+use crate::logging::{LogMessage, log};
 
 static CLIENT: LazyLock<Client> = LazyLock::new(|| {
     let api_key = API_KEY.get().expect("Api key should have been set already!");
@@ -20,8 +23,10 @@ static CLIENT: LazyLock<Client> = LazyLock::new(|| {
         .unwrap()
 });
 
-pub async fn request(url: String) -> Result<Bytes, ProcessError> {
-    let res = CLIENT.get(&url).send().await?;
+pub async fn request(key: CacheKey, url: String) -> Result<Bytes, ProcessError> {
+    let now = Instant::now();
+    let res = CLIENT.get(url).send().await?;
+    log(LogMessage::ElapsedAndUser { key, elapsed: now.elapsed(), message: "Upstream Hit" });
     res.error_for_status()?.bytes().await.map_err(ProcessError::from)
 }
 

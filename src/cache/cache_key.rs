@@ -13,13 +13,6 @@ pub enum CacheKey {
 }
 
 impl CacheKey {
-    pub fn hypixel_url(&self) -> String {
-        match self {
-            CacheKey::Profile(id) => format!("https://api.hypixel.net/v2/skyblock/profiles?uuid={}", id),
-            CacheKey::Secrets(id) => format!("https://api.hypixel.net/v2/player?uuid={}", id),
-        }
-    }
-
     pub fn cache_ttl(&self) -> Duration {
         Duration::from_secs(match self {
             CacheKey::Profile(_) => *PROFILE_CACHE_TTL,

@@ -26,7 +26,7 @@ pub struct MemoryCache(Cache<CacheKey, Bytes>);
 impl MemoryCache {
     pub fn new() -> Self {
         let cache = Cache::builder()
-            .weigher(|_, v: &Bytes| v.len().try_into().unwrap_or(u32::MAX)) // add eviction listener logging
+            .weigher(|_, v: &Bytes| v.len().try_into().unwrap_or(u32::MAX))
             .max_capacity(*CACHE_SIZE * 1024 * 1024)
             .expire_after(Expire)
             .eviction_listener(|key, _, cause| {

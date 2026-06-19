@@ -2,10 +2,12 @@ use actix_web::web::Bytes;
 use tokio::sync::oneshot::Sender;
 use uuid::Uuid;
 
+use crate::cache::database::CompressedBytes;
+
 pub enum DbMessage {
     Write {
         id: Uuid,
-        data: Bytes,
+        data: CompressedBytes,
     },
     Read {
         id: Uuid,

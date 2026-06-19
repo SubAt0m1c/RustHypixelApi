@@ -1,18 +1,17 @@
 use std::time::{Duration, Instant};
 
-use actix_web::web::Bytes;
 use heed::{Database, Env, Error, byteorder, types::{Bytes as ByteSlice, U128}};
 use tokio::{sync::Notify, time::sleep_until};
 use uuid::Uuid;
 
-use crate::cache::compression::compress_data;
+use crate::cache::{database::CompressedBytes};
 
 const MAX_BATCH_SIZE: usize = 20;
 const PAUSE_TIME: Duration = Duration::from_millis(50);
 const MAX_AGE_TIME: Duration = Duration::from_millis(200);
 
 pub enum WriteType {
-    Insert(Bytes),
+    Insert(CompressedBytes),
     Delete,
 }
 
@@ -48,10 +47,11 @@ impl BatchState {
             self.pending_writes.clear();
             self.start_time = None;
             self.last_write_time = None;
+            self.waker.notify_one();
         }
     }
 
-    pub async fn wait_for_commit(&self) {
+    pub async fn wait_to_commit(&self) {
         loop {
             let notified = self.waker.notified();
             let Some(start) = self.start_time else {
@@ -59,11 +59,8 @@ impl BatchState {
                 continue;
             };
     
-            let pause_deadline =
-                self.last_write_time.unwrap_or(start) + PAUSE_TIME;
-        
+            let pause_deadline = self.last_write_time.unwrap_or(start) + PAUSE_TIME;
             let age_deadline = start + MAX_AGE_TIME;
-    
             let deadline = pause_deadline.min(age_deadline);
         
             tokio::select! {
@@ -98,11 +95,7 @@ impl BatchState {
             let key = id.as_u128();
             match write_type {
                 WriteType::Insert(data) => {
-                    // compression is batched here. We could put this on the user task but it would increase response times.
-                    // Leaving it just for the worker immedietly could cause subsequent writes to take longer to be put into the batch
-                    // and potentially miss an earlier batch. This solves both problems but comes at the cost of increasing the time it takes
-                    // to write a batch.
-                    db.put(&mut wtxn, &key, &compress_data(&data))?;
+                    db.put(&mut wtxn, &key, &data)?;
                 }
                 WriteType::Delete => {
                     db.delete(&mut wtxn, &key)?;
@@ -110,9 +103,10 @@ impl BatchState {
             }
         }
         wtxn.commit()?;
-    
+        
         self.start_time = None;
         self.last_write_time = None;
+        self.waker.notify_one();
     
         Ok(())
     }

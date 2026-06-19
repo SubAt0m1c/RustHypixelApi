@@ -18,3 +18,10 @@ serde = "1.0.228"
 heed = "0.22.0"
 tokio =  { version = "1.49.0", features = ["macros", "sync"] }
 dashmap = "6.2.1"
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
