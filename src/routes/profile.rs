@@ -1,41 +1,17 @@
 use crate::cache::cache_key::CacheKey;
 use crate::cache::cache_router::CacheRouter;
-use crate::request_utils::json_response;
+use crate::request_utils::{env_var, json_response};
 use actix_web::error::ErrorInternalServerError;
 use actix_web::web::{Data, Path};
 use actix_web::{get, Responder};
 use uuid::Uuid;
-use std::env;
 use std::str::FromStr;
 use std::sync::LazyLock;
 
 /// Database time to live for profile queries in seconds.
-pub static PROFILE_DB_TTL: LazyLock<u64> = LazyLock::new(|| {
-    let size = env::var("PROFILE_TTL_SECONDS");
-    match size {
-        Ok(size) => {
-            size.parse().expect("PROFILE_TTL_SECONDS should be a u64!")
-        }
-        Err(e) => {
-            eprintln!("{e}: PROFILE_TTL_SECONDS, using 3600 (60 minutes) default.");
-            3600
-        }
-    }
-});
-
+pub static PROFILE_DB_TTL: LazyLock<u64> = LazyLock::new(|| env_var("PROFILE_DB_TTL", 3600));
 /// Cache time to live for profile queries in seconds.
-pub static PROFILE_CACHE_TTL: LazyLock<u64> = LazyLock::new(|| {
-    let size = env::var("PROFILE_CACHE_TTL");
-    match size {
-        Ok(size) => {
-            size.parse().expect("PROFILE_CACHE_TTL should be a u64!")
-        }
-        Err(e) => {
-            eprintln!("{e}: PROFILE_CACHE_TTL, using 120 (2 minutes) default.");
-            120
-        }
-    }
-});
+pub static PROFILE_CACHE_TTL: LazyLock<u64> = LazyLock::new(|| env_var("PROFILE_CACHE_TTL", 120));
 
 #[get("/get/{uuid}")]
 async fn profile(

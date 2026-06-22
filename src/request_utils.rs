@@ -1,3 +1,6 @@
+use std::env;
+use std::fmt::{Debug, Display};
+use std::str::FromStr;
 use std::sync::LazyLock;
 
 use actix_web::http::header::ContentType;
@@ -22,6 +25,22 @@ static CLIENT: LazyLock<Client> = LazyLock::new(|| {
         .build()
         .unwrap()
 });
+
+// ngl probably shouldnt be here but idrk where to put it o
+pub fn env_var<T>(key: &'static str, default: T) -> T
+where
+    T: FromStr + Display,
+    T::Err: Debug
+{
+    let var = env::var(key);
+    match var {
+        Ok(str) => str.parse::<T>().expect(&format!("{} should be a {}!", key, std::any::type_name::<T>())),
+        Err(e) => {
+            eprintln!("{e}: {}, using {} default.", key, default);
+            default
+        }
+    }
+}
 
 pub async fn request(key: CacheKey, url: String) -> Result<Bytes, ProcessError> {
     let now = Instant::now();

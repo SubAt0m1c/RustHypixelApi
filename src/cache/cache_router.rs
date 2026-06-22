@@ -20,7 +20,11 @@ impl CacheRouter {
     pub async fn get(&self, key: CacheKey, processer: fn(Bytes) -> Result<Bytes, ProcessError>) -> Result<Bytes, ProcessError> {
         // try_get_with actually handles the pending queue for us and doesnt suck at it
         self.cache.try_get_with(key, async {
-            Ok(match key {
+            log(LogMessage::MessageAndUser {
+                key,
+                message: "LOADER START",
+            });
+            let res = Ok(match key {
                 CacheKey::Profile(id) => {
                     if let Ok(Some(db_data)) = self.database.read(id).await {
                         log(LogMessage::MessageAndUser { key, message: "DB Hit" });
@@ -32,7 +36,14 @@ impl CacheRouter {
                     raw
                 }
                 CacheKey::Secrets(id) => request(key, format!("https://api.hypixel.net/v2/player?uuid={}", id)).await.and_then(processer)?,
-            })
+            });
+
+
+            log(LogMessage::MessageAndUser {
+                key,
+                message: "LOADER END",
+            });
+            res
         }).await
     }
 }

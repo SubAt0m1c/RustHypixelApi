@@ -1,29 +1,18 @@
-use std::{env, fs, sync::LazyLock, time::{Duration, Instant}};
+use std::{fs, sync::LazyLock, time::{Duration, Instant}};
 
 use actix_web::web::Bytes;
 use heed::{byteorder, types::{Bytes as ByteSlice, U128}, Database, Env, EnvOpenOptions};
 use tokio::{sync::mpsc::UnboundedReceiver, task::JoinHandle};
 use uuid::Uuid;
 
-use crate::{cache::database::{batch_state::{BatchState, WriteType}, db_message::DbMessage, timed_queue::TimedQueue}, routes::profile::PROFILE_DB_TTL};
+use crate::{cache::database::{batch_state::{BatchState, WriteType}, db_message::DbMessage, timed_queue::TimedQueue}, request_utils::env_var, routes::profile::PROFILE_DB_TTL};
 
 mod batch_state;
 pub mod db_handle;
 pub mod db_message;
 mod timed_queue;
 
-static DB_SIZE: LazyLock<usize> = LazyLock::new(|| {
-    let size = env::var("DB_SIZE");
-    match size {
-        Ok(size) => {
-            size.parse().expect("DB_SIZE should be a usize (likely u64, could be u32)!")
-        }
-        Err(e) => {
-            eprintln!("{e}: DB_SIZE, using 4096 (mb) (4 gb) default.");
-            4096
-        }
-    }
-});
+static DB_SIZE: LazyLock<usize> = LazyLock::new(|| env_var("DB_SIZE", 4096));
 
 // this doesnt really need to be lazylock if we just move it into the db handle... shrug
 pub(crate) static ENVIRONMENT: LazyLock<Env> = LazyLock::new(|| {

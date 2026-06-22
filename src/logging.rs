@@ -37,20 +37,20 @@ impl Display for LogMessage {
     } 
 }
 
-static SENDER: OnceCell<UnboundedSender<LogMessage>> = OnceCell::const_new();
+static SENDER: OnceCell<UnboundedSender<(UtcDateTime, LogMessage)>> = OnceCell::const_new();
 
 pub fn log(msg: LogMessage) {
     if let Some(tx) = SENDER.get() {
-        let _ = tx.send(msg);
+        let _ = tx.send((UtcDateTime::now(), msg));
     }
 }
 
 pub fn init() {
-    let (tx, mut rx) = unbounded_channel::<LogMessage>();
+    let (tx, mut rx) = unbounded_channel::<(UtcDateTime, LogMessage)>();
     SENDER.set(tx).unwrap();
     thread::spawn(move || {
-        while let Some(message) = rx.blocking_recv() {
-            println!("{}: {}", UtcDateTime::now(), message)
+        while let Some((time, msg)) = rx.blocking_recv() {
+            println!("{}: {}", time, msg)
         }
     });
 }

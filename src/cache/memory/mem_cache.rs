@@ -1,23 +1,12 @@
-use std::{env, sync::{Arc, LazyLock}};
+use std::sync::{Arc, LazyLock};
 
 use actix_web::web::Bytes;
 use moka::{future::Cache, notification::RemovalCause};
 
-use crate::{cache::{cache_key::CacheKey, memory::mem_entry::Expire}, error::ProcessError, logging::{LogMessage, log}};
+use crate::{cache::{cache_key::CacheKey, memory::mem_entry::Expire}, error::ProcessError, logging::{LogMessage, log}, request_utils::env_var};
 
 /// Maximum size for the cache in megabytes.
-static CACHE_SIZE: LazyLock<u64> = LazyLock::new(|| {
-    let size = env::var("CACHE_SIZE");
-    match size {
-        Ok(size) => {
-            size.parse().expect("CACHE_SIZE should be a a u64!")
-        }
-        Err(e) => {
-            eprintln!("{e}: CACHE_SIZE, using 384 (mb) default.");
-            384
-        }
-    }
-});
+static CACHE_SIZE: LazyLock<u64> = LazyLock::new(|| env_var("CACHE_SIZE", 384));
 
 /// Thin wrapper around a Moka Cache with keys and entries already defined.
 #[derive(Clone)]
@@ -43,6 +32,15 @@ impl MemoryCache {
     where
         F: Future<Output=Result<Bytes, ProcessError>>,
     {
+        log(LogMessage::MessageAndUser {
+            key,
+            message: if self.0.contains_key(&key) {
+                "CACHE CONTAINS"
+            } else {
+                "CACHE MISS"
+            },
+        });
+        
         self.0.try_get_with(key, init).await.map_err(Arc::unwrap_or_clone)
     }
 

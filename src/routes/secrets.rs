@@ -1,7 +1,7 @@
 use crate::cache::cache_key::CacheKey;
 use crate::cache::cache_router::CacheRouter;
 use crate::error::ProcessError;
-use crate::request_utils::json_response;
+use crate::request_utils::{env_var, json_response};
 use actix_web::error::ErrorInternalServerError;
 use actix_web::web::{Bytes, Data, Path};
 use actix_web::{get, Responder};
@@ -9,23 +9,11 @@ use serde_json::to_vec;
 use simd_json::{BorrowedValue, to_borrowed_value};
 use simd_json::derived::ValueObjectAccess;
 use uuid::Uuid;
-use std::env;
 use std::str::FromStr;
 use std::sync::LazyLock;
 
 /// Cache time to live for secret queries in seconds. Secret queries do not query the database.
-pub static SECRETS_TTL_SECONDS: LazyLock<u64> = LazyLock::new(|| {
-    let size = env::var("SECRETS_TTL_SECONDS");
-    match size {
-        Ok(size) => {
-            size.parse().expect("SECRETS_TTL_SECONDS should be a u64!")
-        }
-        Err(e) => {
-            eprintln!("{e}: SECRETS_TTL_SECONDS, using 120 (2 minutes) default.");
-            120
-        }
-    }
-});
+pub static SECRETS_TTL_SECONDS: LazyLock<u64> = LazyLock::new(|| env_var("SECRETS_TTL_SECONDS", 120));
 
 #[get("/secrets/{uuid}")]
 async fn secrets(
