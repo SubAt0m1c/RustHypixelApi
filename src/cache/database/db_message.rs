@@ -1,16 +1,18 @@
+use std::time::Duration;
+
 use actix_web::web::Bytes;
 use tokio::sync::oneshot::Sender;
-use uuid::Uuid;
 
-use crate::cache::database::CompressedBytes;
+use crate::cache::{UuidKey, database::CompressedBytes};
 
 pub enum DbMessage {
     Write {
-        id: Uuid,
+        id: UuidKey,
+        ttl: Duration,
         data: CompressedBytes,
     },
     Read {
-        id: Uuid,
+        id: UuidKey,
         res: Sender<Option<Bytes>>
     }
 }

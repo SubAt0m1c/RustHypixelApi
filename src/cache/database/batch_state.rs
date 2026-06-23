@@ -2,9 +2,8 @@ use std::time::{Duration, Instant};
 
 use heed::{Database, Env, Error, byteorder, types::{Bytes as ByteSlice, U128}};
 use tokio::{sync::Notify, time::sleep_until};
-use uuid::Uuid;
 
-use crate::cache::{database::CompressedBytes};
+use crate::cache::{UuidKey, database::CompressedBytes};
 
 const MAX_BATCH_SIZE: usize = 20;
 const PAUSE_TIME: Duration = Duration::from_millis(50);
@@ -16,7 +15,7 @@ pub enum WriteType {
 }
 
 pub struct BatchState {
-    pub pending_writes: Vec<(Uuid, WriteType)>,
+    pub pending_writes: Vec<(UuidKey, WriteType)>,
     pub start_time: Option<Instant>,
     pub last_write_time: Option<Instant>,
     pub waker: Notify
@@ -32,7 +31,7 @@ impl BatchState {
         }
     }
     
-    pub fn insert(&mut self, id: Uuid, write_type: WriteType, env: &Env, db: Database<U128<byteorder::NativeEndian>, ByteSlice>) {
+    pub fn insert(&mut self, id: UuidKey, write_type: WriteType, env: &Env, db: Database<U128<byteorder::NativeEndian>, ByteSlice>) {
         self.pending_writes.push((id, write_type));
         self.update_time();
        

@@ -1,11 +1,10 @@
-use std::{fs, sync::LazyLock, time::{Duration, Instant}};
+use std::{fs, sync::LazyLock, time::Instant};
 
 use actix_web::web::Bytes;
 use heed::{byteorder, types::{Bytes as ByteSlice, U128}, Database, Env, EnvOpenOptions};
 use tokio::{sync::mpsc::UnboundedReceiver, task::JoinHandle};
-use uuid::Uuid;
 
-use crate::{cache::database::{batch_state::{BatchState, WriteType}, db_message::DbMessage, timed_queue::TimedQueue}, request_utils::env_var, routes::profile::PROFILE_DB_TTL};
+use crate::{cache::{UuidKey, database::{batch_state::{BatchState, WriteType}, db_message::DbMessage, timed_queue::TimedQueue}}, request_utils::env_var};
 
 mod batch_state;
 pub mod db_handle;
@@ -36,7 +35,7 @@ pub fn spawn_db_worker(mut rx: UnboundedReceiver<DbMessage>) -> JoinHandle<()> {
         wtxn.commit().expect("Should have committed initial db creation");
         
         let mut batch_state = BatchState::new();
-        let mut ttl_queue: TimedQueue<Uuid> = TimedQueue::new();
+        let mut ttl_queue: TimedQueue<UuidKey> = TimedQueue::new();
 
         loop {
             tokio::select! {
@@ -47,9 +46,9 @@ pub fn spawn_db_worker(mut rx: UnboundedReceiver<DbMessage>) -> JoinHandle<()> {
                     }; 
 
                     match recv {
-                        DbMessage::Write { id, data } => {
+                        DbMessage::Write { id, ttl, data } => {
                             batch_state.insert(id, WriteType::Insert(data), &ENVIRONMENT, database);
-                            ttl_queue.insert(id, Instant::now() + Duration::from_secs(*PROFILE_DB_TTL))
+                            ttl_queue.insert(id, Instant::now() + ttl)
                         }
                         DbMessage::Read { id, res } => {
                             let rtxn = ENVIRONMENT.read_txn().expect("Should have gotten read txn!");

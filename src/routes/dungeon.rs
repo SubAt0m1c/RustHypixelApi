@@ -31,7 +31,7 @@ async fn dungeon_info(
 
     for uuid in parsed_uuids {
         futures.push({
-            let key = CacheKey::Profile(uuid);
+            // let key = CacheKey::Profile(uuid);
             let client = client.clone();
             let cache = cache.clone();
 

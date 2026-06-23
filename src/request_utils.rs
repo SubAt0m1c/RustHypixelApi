@@ -10,7 +10,7 @@ use reqwest::{header:: HeaderMap, Client};
 use tokio::time::Instant;
 
 use crate::API_KEY;
-use crate::cache::cache_key::CacheKey;
+use crate::cache::UuidKey;
 use crate::error::ProcessError;
 use crate::logging::{LogMessage, log};
 
@@ -42,10 +42,10 @@ where
     }
 }
 
-pub async fn request(key: CacheKey, url: String) -> Result<Bytes, ProcessError> {
+pub async fn request(key: UuidKey, url: String) -> Result<Bytes, ProcessError> {
     let now = Instant::now();
     let res = CLIENT.get(url).send().await?;
-    log(LogMessage::ElapsedAndUser { key, elapsed: now.elapsed(), message: "Upstream Hit" });
+    log(LogMessage::ElapsedUserStatus { key, elapsed: now.elapsed(), message: "Upstream hit", code: res.status().as_u16() });
     res.error_for_status()?.bytes().await.map_err(ProcessError::from)
 }
 

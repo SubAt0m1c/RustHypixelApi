@@ -1,22 +1,22 @@
-use std::time::Duration;
-
-use serde::Serialize;
+use actix_web::web::Bytes;
 use uuid::Uuid;
 
-use crate::routes::{profile::PROFILE_CACHE_TTL, secrets::SECRETS_TTL_SECONDS};
+use crate::{cache::{UuidKey, database::db_handle::DbHandle, expires::Expires}, error::ProcessError};
 
-/// Key used for both DB cache and memory caches.
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Serialize, Debug)]
-pub enum CacheKey {
-    Secrets(Uuid),
-    Profile(Uuid),
-}
+pub trait CacheKey {
+    const KEYFLAG: u8;
+    
+    fn uuid(&self) -> Uuid;
+    
+    fn expires(&self) -> Expires;
 
-impl CacheKey {
-    pub fn cache_ttl(&self) -> Duration {
-        Duration::from_secs(match self {
-            CacheKey::Profile(_) => *PROFILE_CACHE_TTL,
-            CacheKey::Secrets(_) => *SECRETS_TTL_SECONDS,
-        })
+    /// Ran when this key results in a cache miss on the memory cache.
+    /// If this function returns Ok(), it will add the Bytes into the memory cache.
+    /// Otherwise, no entry will be added to the memory cache and the error should be
+    /// propegated up.
+    async fn get_or_insert(&self, db: &DbHandle) -> Result<Bytes, ProcessError>;
+    
+    fn key(&self) -> UuidKey {
+        UuidKey::encode(self.uuid(), Self::KEYFLAG, self.expires())
     }
 }
