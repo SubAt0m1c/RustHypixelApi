@@ -4,6 +4,9 @@ use uuid::Uuid;
 use crate::{cache::{UuidKey, database::db_handle::DbHandle, expires::Expires}, error::ProcessError};
 
 pub trait CacheKey {
+    /// flag for db storage/etc. 
+    /// MUST be unique across implementations of CacheKey.
+    /// can only store a max of 8 values rn
     const KEYFLAG: u8;
     
     fn uuid(&self) -> Uuid;
