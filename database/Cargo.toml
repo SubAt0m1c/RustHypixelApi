@@ -1,0 +1,15 @@
+[package]
+name = "database"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dashmap = "6.2.1"
+tokio = { version = "1.52.3", features = ["sync", "rt-multi-thread", "tokio-macros", "fs", "parking_lot"] }
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "fat"

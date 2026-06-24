@@ -1,7 +1,11 @@
+[workspace]
+
 [package]
 name = "hypixel_api"
 version = "0.1.0"
 edition = "2024"
+
+members = ["database"]
 
 [dependencies]
 actix-web = { version = "4.13.0" }
