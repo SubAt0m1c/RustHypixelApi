@@ -6,8 +6,11 @@ mod request_utils;
 mod logging;
 mod error;
 
+use std::sync::LazyLock;
+
 use crate::cache::cache_router::CacheRouter;
 use crate::key_extractor::RealKeyExtractor;
+use crate::request_utils::env_var;
 use crate::routes::profile::profile;
 use crate::routes::secrets::secrets;
 use actix_governor::{Governor, GovernorConfigBuilder};
@@ -33,8 +36,8 @@ async fn main() -> std::io::Result<()> {
 
     let rate_limit = GovernorConfigBuilder::default()
         .key_extractor(RealKeyExtractor)
-        .seconds_per_request(3)
-        .burst_size(10)
+        .seconds_per_request(env_var("RATELIMIT_REFRESH", 3))
+        .burst_size(env_var("RATELIMIT_BURST", 10))
         .finish()
         .unwrap();
 

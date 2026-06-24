@@ -26,14 +26,13 @@ static CLIENT: LazyLock<Client> = LazyLock::new(|| {
         .unwrap()
 });
 
-// ngl probably shouldnt be here but idrk where to put it o
+// ngl probably shouldnt be here but idrk where to put it
 pub fn env_var<T>(key: &'static str, default: T) -> T
 where
     T: FromStr + Display,
     T::Err: Debug
 {
-    let var = env::var(key);
-    match var {
+    match env::var(key) {
         Ok(str) => str.parse::<T>().expect(&format!("{} should be a {}!", key, std::any::type_name::<T>())),
         Err(e) => {
             eprintln!("{e}: {}, using {} default.", key, default);
