@@ -11,6 +11,7 @@ pub enum ProcessError {
     InternalServerError(&'static str),
     RequestError(StatusCode),
     SerializationError(String),
+    DatabaseError(String),
 }
 
 impl ProcessError {
@@ -25,6 +26,7 @@ impl Display for ProcessError {
             Self::InternalServerError(msg) => write!(f, "{}: {}", StatusCode::INTERNAL_SERVER_ERROR, msg),
             Self::RequestError(error_code) => error_code.fmt(f),
             Self::SerializationError(msg) => write!(f, "{}: {}", StatusCode::INTERNAL_SERVER_ERROR, msg),
+            Self::DatabaseError(msg) => write!(f, "{}: {}", StatusCode::INTERNAL_SERVER_ERROR, msg)
         }
     }
 }
@@ -46,6 +48,12 @@ impl From<SimdError> for ProcessError {
 impl From<SerdeError> for ProcessError {
     fn from(value: SerdeError) -> Self {
         Self::SerializationError(value.to_string())
+    }
+}
+
+impl From<database::error::Error> for ProcessError {
+    fn from(value: database::error::Error) -> Self {
+        Self::DatabaseError(value.to_string())
     }
 }
 

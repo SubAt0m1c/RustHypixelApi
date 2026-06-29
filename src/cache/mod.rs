@@ -4,8 +4,7 @@ use uuid::Uuid;
 
 use crate::cache::{expires::Expires};
 
-mod compression;
-pub mod database;
+pub mod compression;
 pub mod cache_router;
 pub mod expires;
 mod memory;

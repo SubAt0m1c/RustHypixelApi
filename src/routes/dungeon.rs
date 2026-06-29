@@ -7,7 +7,7 @@ use serde::Serialize;
 use simd_json::{base::{ValueAsArray, ValueAsScalar}, derived::ValueObjectAccess, serde::from_borrowed_value, to_borrowed_value, to_owned_value};
 use uuid::Uuid;
 
-use crate::cache::{cache_key::CacheKey, cache_router::CacheRouter};
+use crate::cache::{cache_key::CacheKey, cache_router::{CacheRouter, TokioRT}};
 
 #[derive(Serialize, Debug)]
 pub struct DungeonInfo {
@@ -21,7 +21,7 @@ pub struct DungeonInfo {
 async fn dungeon_info(
     body: Bytes,
     client: Data<Client>,
-    cache: Data<CacheRouter>,
+    cache: Data<CacheRouter<TokioRT>>,
 ) -> actix_web::Result<impl Responder> {
     let mut body_vec = body.to_vec();
     let parsed_uuids = from_borrowed_value::<Vec<Uuid>>(to_borrowed_value(&mut body_vec).map_err(ErrorInternalServerError)?).map_err(ErrorInternalServerError)?;

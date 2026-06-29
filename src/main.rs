@@ -6,9 +6,7 @@ mod request_utils;
 mod logging;
 mod error;
 
-use std::sync::LazyLock;
-
-use crate::cache::cache_router::CacheRouter;
+use crate::cache::cache_router::{CacheRouter, TokioRT};
 use crate::key_extractor::RealKeyExtractor;
 use crate::request_utils::env_var;
 use crate::routes::profile::profile;
@@ -41,7 +39,7 @@ async fn main() -> std::io::Result<()> {
         .finish()
         .unwrap();
 
-    let cache = Data::new(CacheRouter::new());
+    let cache = Data::new(CacheRouter::<TokioRT>::load().await.unwrap());
 
     HttpServer::new(move || {
         App::new()
