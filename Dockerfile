@@ -1,4 +1,4 @@
-FROM rust:1.88-slim AS base
+FROM rust:1.96-slim AS base
 RUN apt-get update && apt-get install -y \
     build-essential \
     libssl-dev \

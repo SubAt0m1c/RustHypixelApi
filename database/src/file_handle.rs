@@ -124,7 +124,7 @@ impl FileHandle {
     
         for io_slice in iovecs {
             #[cfg(windows)]
-            std::os::windows::fs::FileExt::seek_write(file, &mut buf, offset)?;
+            let n = std::os::windows::fs::FileExt::seek_write(file, io_slice, off)?;
             #[cfg(unix)]
             let n = std::os::unix::fs::FileExt::write_at(file, io_slice, off)?;
             
@@ -144,6 +144,6 @@ fn read_at(file: &File, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
     #[cfg(unix)]
     let read = std::os::unix::fs::FileExt::read_at(file, buf.as_mut(), offset);
     #[cfg(windows)]
-    let read = std::os::windows::fs::FileExt::seek_read(file, buf.as_mut(), position);
+    let read = std::os::windows::fs::FileExt::seek_read(file, buf.as_mut(), offset);
     read
 }
