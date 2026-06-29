@@ -3,4 +3,3 @@ target
 Dockerfile
 install.sh
 *.md
-database/
