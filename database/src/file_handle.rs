@@ -1,4 +1,4 @@
-use std::{fs::{self, File, OpenOptions}, io::{self, ErrorKind, IoSlice, Write}, path::PathBuf, sync::{Arc, atomic::{AtomicU64, Ordering}}};
+use std::{fs::{self, File, OpenOptions}, io::{self, ErrorKind, IoSlice}, path::PathBuf, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 
 use bytes::{Buf, BytesMut};
 use parking_lot::RwLock;
@@ -126,7 +126,7 @@ impl FileHandle {
                 #[cfg(windows)]
                 let n = std::os::windows::fs::FileExt::seek_write(file, io_slice, offset)?;
                 #[cfg(unix)]
-                let n = std::os::unix::fs::FileExt::write_at(file, io_slice, off)?;
+                let n = std::os::unix::fs::FileExt::write_at(file, io_slice, offset)?;
                 
                 offset += n as u64;
                 total += n;
