@@ -1,11 +1,11 @@
-use std::{fs::{self, File, OpenOptions}, io::{self, ErrorKind, IoSlice}, path::PathBuf, sync::{atomic::{AtomicU64, Ordering}, Arc}};
+use std::{fs::{self, File, OpenOptions}, io::{self, ErrorKind, IoSlice, Write}, path::PathBuf, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 
-use bytes::{Buf, BufMut};
+use bytes::{Buf, BytesMut};
 use parking_lot::RwLock;
 
 use crate::{error::Error, runtime::SendRuntime, Result};
 
-pub struct FileHandle {
+pub(crate) struct FileHandle {
     inner: Arc<Inner>
 }
 
@@ -27,7 +27,7 @@ impl FileHandle {
                 .create(true)
                 .open(inner_path)?;
             let end = file.metadata()?.len();
-            Ok::<(File, u64), Error>((file, end))
+            Ok::<_, Error>((file, end))
         }).await??;
 
         Ok(Self {
@@ -49,7 +49,7 @@ impl FileHandle {
         })
     }
 
-    
+    // buf + trait spam so chains dont need to be really concrete.
     pub async fn append_from<RT: SendRuntime, B: Buf + Send + Sync + 'static>(&self, buf: B) -> Result<u64> {
         let inner = self.inner.clone();
         let len = buf.remaining() as u64;
@@ -58,21 +58,21 @@ impl FileHandle {
             let file = lock.as_ref().ok_or(Error::filenotfound("File removed already!"))?;
             
             let start = inner.offset.fetch_add(len, Ordering::Relaxed);
-            // SAFETY: We have ensured enough unique access room with self.reserve. 
+            // SAFETY: We have ensured enough unique access room with offset reserving. 
             unsafe { Self::write_all_buf_at(&file, start, buf)? }
-            Ok::<u64, Error>(start)
+            Ok::<_, Error>(start)
         }).await.flatten()
     }
-    
-    pub async fn read_to<RT: SendRuntime, B: BufMut + Send + Sync + 'static + AsMut<[u8]>>(&self, offset: u64, mut buf: B) -> Result<Option<B>> {
+
+    pub async fn read_to<RT: SendRuntime>(&self, offset: u64, mut buf: BytesMut) -> Result<Option<BytesMut>> {
         let inner = self.inner.clone();
         RT::spawn_blocking(move || {
             let lock = inner.file.read();
             let Some(file) = lock.as_ref() else { return Ok(None)};
 
-            Self::read_exact(file, offset, buf.as_mut())?;
-            Ok::<Option<B>, Error>(Some(buf))
-        }).await.map_err(Into::into).flatten()
+            Self::read_exact(file, offset, &mut buf)?;
+            Ok::<_, Error>(Some(buf))
+        }).await.flatten()
     }
 
     pub fn delete<RT: SendRuntime>(&self) -> impl Future<Output = Result<()>> + use<RT> {
@@ -84,8 +84,6 @@ impl FileHandle {
     }   
     
     /// SAFETY: Caller must ensure the offset does not align with another concurrent write.
-    /// 
-    /// idrk if this matters tbh. 
     unsafe fn write_all_buf_at<B: Buf>(
         file: &File,
         mut offset: u64,
@@ -105,34 +103,34 @@ impl FileHandle {
     fn read_exact(file: &File, mut offset: u64, mut buf: &mut [u8]) -> io::Result<()> {
         while !buf.is_empty() {
             match read_at(file, offset, buf) {
-                Ok(0) => break,
+                Ok(0) => return Err(io::Error::new(ErrorKind::UnexpectedEof, "failed to fill whole buffer")),
                 Ok(n) => {
                     buf = &mut buf[n..];
                     offset += n as u64;
                 }
-                Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e),
             }
         }
-        if !buf.is_empty() { Err(io::Error::new(ErrorKind::UnexpectedEof, "failed to fill whole buffer")) } else { Ok(()) }
+        Ok(())
     }
     
     /// SAFETY: Caller must ensure the offset does not align with another concurrent write.
-    unsafe fn writev_at(file: &File, offset: u64, iovecs: &[IoSlice]) -> io::Result<usize> {
-        let mut off = offset;
+    unsafe fn writev_at(file: &File, mut offset: u64, iovecs: &[IoSlice]) -> io::Result<usize> {
         let mut total = 0;
     
         for io_slice in iovecs {
-            #[cfg(windows)]
-            let n = std::os::windows::fs::FileExt::seek_write(file, io_slice, off)?;
-            #[cfg(unix)]
-            let n = std::os::unix::fs::FileExt::write_at(file, io_slice, off)?;
-            
-            off += n as u64;
-            total += n;
-    
-            if n == 0 {
-                break;
+            let mut slice = io_slice.as_ref();
+
+            while !slice.is_empty() {
+                #[cfg(windows)]
+                let n = std::os::windows::fs::FileExt::seek_write(file, io_slice, offset)?;
+                #[cfg(unix)]
+                let n = std::os::unix::fs::FileExt::write_at(file, io_slice, off)?;
+                
+                offset += n as u64;
+                total += n;
+                slice = &slice[n..];
             }
         }
     
@@ -142,8 +140,8 @@ impl FileHandle {
 
 fn read_at(file: &File, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
     #[cfg(unix)]
-    let read = std::os::unix::fs::FileExt::read_at(file, buf.as_mut(), offset);
+    let read = std::os::unix::fs::FileExt::read_at(file, buf, offset);
     #[cfg(windows)]
-    let read = std::os::windows::fs::FileExt::seek_read(file, buf.as_mut(), offset);
+    let read = std::os::windows::fs::FileExt::seek_read(file, buf, offset);
     read
 }

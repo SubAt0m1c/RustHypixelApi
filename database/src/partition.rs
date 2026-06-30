@@ -27,7 +27,7 @@ impl Partition {
 
     /// creates a partition file by reading an existing file. Returns a vec of key/entry pairs it contains.
     pub fn from_file(path: PathBuf) -> Result<(Vec<(u128, PartitionEntry)>, Self)> {
-        const ENTRYDATALENGTH: usize = size_of::<u128>() + size_of::<u64>() + size_of::<u64>();
+        const ENTRYMETADATALENGTH: usize = size_of::<u128>() + size_of::<u64>() + size_of::<u64>();
         
         let mut file = File::options().read(true).open(&path)?;
         let mut buffer = BytesMut::with_capacity(8 * 1024 * 1024);
@@ -36,11 +36,11 @@ impl Partition {
         let mut position: usize = 0;
         
         loop {
-            let read = fill(&mut file, &mut buffer)?;
+            let read = fill(&mut file, &mut buffer)?; 
             if read == 0 { break; } // EOF
 
-            if buffer.len() <= ENTRYDATALENGTH { continue }
-            position += ENTRYDATALENGTH;
+            if buffer.len() <= ENTRYMETADATALENGTH { continue } // attempt to refill the buffer if it came up short
+            position += ENTRYMETADATALENGTH;
             
             let _key_len = buffer.get_u64();
             let key = buffer.get_u128();
@@ -76,6 +76,7 @@ impl Partition {
         let key_buf = SizedBytes::from(key.to_be_bytes());
         let value_len_buf = SizedBytes::from(value_len.to_be_bytes());
 
+        // this is chained to avoid allocating and doing nonsense to another buffer with the input value.
         let chain = Buf::chain(key_len_buf, key_buf)
             .chain(value_len_buf)
             .chain(value);
@@ -93,10 +94,12 @@ impl Partition {
 
     #[inline]
     pub async fn read<RT: SendRuntime>(&self, position: PartitionEntry) -> Result<Option<Bytes>> {
-        self.file.read_to::<RT, _>(position.position, BytesMut::zeroed(position.value_len)).await.map(|b| b.map(|b| b.freeze()))
+        self.file.read_to::<RT>(position.position, BytesMut::zeroed(position.value_len)).await.map(|b| b.map(|b| b.freeze()))
     }
+    
     /// This removes all keys from this partition that are shared by the entries dashmap
     /// After removing these keys, it returns a future to a pending file deletion.
+    /// This will delete keys immedietly without being polled and on poll will delete the file.
     pub fn purge<RT: SendRuntime>(&self, entries: &DashMap<u128, CacheEntry>) -> impl Future<Output = Result<()>> + use<RT> {
         let keys: Vec<u128> = std::mem::replace(self.keys.lock().as_mut(), Vec::new());
         for key in keys {
@@ -104,11 +107,6 @@ impl Partition {
         }
         self.file.delete::<RT>()   
     }
-
-    // #[inline]
-    // pub fn elapsed(&self, now: u64, window: &Duration) -> bool {
-    //     now >= self.id + window.as_secs()
-    // }
 }
 
 fn fill<R: Read>(reader: &mut R, buf: &mut BytesMut) -> io::Result<usize> {
@@ -116,7 +114,7 @@ fn fill<R: Read>(reader: &mut R, buf: &mut BytesMut) -> io::Result<usize> {
     
     let spare = buf.spare_capacity_mut();
 
-    // safety: we ne
+    // SAFETY: We don't read from this and we only set its length for as much as was read.
     let dst = unsafe {
         std::slice::from_raw_parts_mut(
             spare.as_mut_ptr() as *mut u8,
@@ -126,6 +124,7 @@ fn fill<R: Read>(reader: &mut R, buf: &mut BytesMut) -> io::Result<usize> {
 
     let n = reader.read(dst)?;
 
+    // SAFETY: Read::read returns the number of written bytes.
     unsafe {
         buf.set_len(buf.len() + n);
     }

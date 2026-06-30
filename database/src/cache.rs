@@ -34,9 +34,9 @@ impl Key for ParKey {
 }
 
 #[derive(Clone, Copy)]
-pub struct CacheEntry {
-    pub partition_key: ParKey,
-    pub position: PartitionEntry,
+pub(crate) struct CacheEntry {
+    partition_key: ParKey,
+    position: PartitionEntry,
 }
 
 /// Memory mapped, managed ttl database.
@@ -74,7 +74,7 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
                 if !entry.file_type()?.is_dir() { continue }
                 let Some(bucket_id) = entry.file_name().into_string().ok().and_then(|n| n.parse::<u64>().ok()) else { continue };
                 let bucket_path = entry.path();
-                let bucket_duration = Duration::from_millis(bucket_id);
+                let bucket_ttl = Duration::from_millis(bucket_id);
                 let mut active = ActivePartition::new(ParKey::from_id(SlotId::INVALID), 0);
 
                 for partition in fs::read_dir(&bucket_path)? {
@@ -84,7 +84,7 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
                     
                     let (keys, partition) = Partition::from_file(entry.path())?;
                     let par_key = partition_map.insert(partition, &partition_map.pin());
-                    exp_tx.send(ExpCMD::Schedule { time: insertion + bucket_duration.as_secs(), partition_key: par_key }).map_err(Error::flume)?;
+                    exp_tx.send(ExpCMD::Schedule { time: insertion + bucket_ttl.as_secs(), par_key }).map_err(Error::flume)?;
                     
                     active = ActivePartition::new(par_key, insertion);  // the last file should be the most recent, and thus the last active one.
                     for (key, entry) in keys {
@@ -93,7 +93,7 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
                     }
                 }
                 
-                buckets.insert(bucket_id, Bucket::new_existing(active, bucket_duration, bucket_path));
+                buckets.insert(bucket_id, Bucket::new_existing(active, bucket_ttl, bucket_path));
             }
 
             let inner = DbInner {
@@ -138,15 +138,14 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
 
         if !self.inner.buckets.contains_key(&cache_id) {
             let path = self.inner.path.join(format!("{}", ttl.as_millis()));
-            let bucket = Bucket::new::<RT>(path, now, &self.inner.partitions).await?;
+            let bucket = Bucket::new::<RT>(path, now, ttl, &self.inner.partitions, &self.inner.exp_tx).await?;
             // this access is dropped because we want do not want to hold a lock for the mutable reference accross the coming .await.
             self.inner.buckets.entry(cache_id).or_insert(bucket); 
         }
         
         let bucket = self.inner.buckets.get(&cache_id).ok_or(Error::bucket_str("Bucket was removed before it could be accessed."))?;
-        let (partition_key, position) = bucket.insert::<RT>(key, value, &self.inner.partitions).await?;
+        let (partition_key, position) = bucket.insert::<RT>(key, value, &self.inner.partitions, &self.inner.exp_tx).await?;
         self.inner.entries.insert(key, CacheEntry { partition_key, position });
-        self.inner.exp_tx.send(ExpCMD::Schedule { time: now + ttl.as_secs(), partition_key }).map_err(Error::flume)?;
         Ok(())
     }
 

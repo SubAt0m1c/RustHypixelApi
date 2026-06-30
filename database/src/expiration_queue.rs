@@ -8,14 +8,14 @@ use crate::{cache::{DbInner, ParKey}, partition::Partition, runtime::SendRuntime
 pub enum ExpCMD {
     Schedule {
         time: u64,
-        partition_key: ParKey,
+        par_key: ParKey,
     }
 }
 
 #[derive(PartialEq, Eq)]
 pub struct QueueEntry {
     time: u64,
-    partition_key: ParKey
+    par_key: ParKey
 }
 
 impl Ord for QueueEntry {
@@ -64,7 +64,7 @@ pub fn spawn_expiration_task<RT: SendRuntime>(cache_inner: Arc<DbInner<RT>>, rx:
 
                     let purge = {
                         let guard: Guard<'_> = cache_inner.partitions.pin();
-                        let partition: &Partition = cache_inner.partitions.remove(entry.partition_key, &guard).expect("break ig?");
+                        let partition: &Partition = cache_inner.partitions.remove(entry.par_key, &guard).expect("break ig?");
                         partition.purge::<RT>(&cache_inner.entries)
                     };
                     purge.await.expect("Failed to purge file.");
@@ -91,6 +91,6 @@ pub fn spawn_expiration_task<RT: SendRuntime>(cache_inner: Arc<DbInner<RT>>, rx:
 
 fn handle_message(msg: ExpCMD, queue: &mut BinaryHeap<QueueEntry>) {
     match msg {
-        ExpCMD::Schedule { time, partition_key } => queue.push(QueueEntry { time, partition_key, }),
+        ExpCMD::Schedule { time, par_key } => queue.push(QueueEntry { time, par_key, }),
     }
 }
