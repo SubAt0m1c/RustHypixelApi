@@ -1,24 +1,17 @@
 use actix_web::web::Bytes;
-use database::{cache::Database, error::ResultExt, runtime::Runtime};
+use ltmdb::{Database, ResultExt, Runtime};
 use tokio::{spawn, task::spawn_blocking, time::Instant};
 
 use crate::{cache::{cache_key::CacheKey, memory::mem_cache::MemoryCache}, error::ProcessError, logging::{log, LogMessage}};
 
 /// Routes cache requests to the memory cache and db cache.
-/// Secret requests/insertions will not query the db.
-pub struct CacheRouter<RT: Runtime + Send + Sync + 'static> {
+/// behavior during insertion is handled via the CacheKey trait.
+pub struct CacheRouter {
     cache: MemoryCache,
-    database: Database<RT>,
+    database: Database<TokioRT>,
 }
 
-impl<RT: Runtime + Send + Sync + 'static> CacheRouter<RT> {
-    // pub fn new() -> Self {
-    //     Self {
-    //         cache: MemoryCache::new(),
-    //         database: Database::create_new(".db"),
-    //     }
-    // }
-
+impl CacheRouter {
     pub async fn load() -> Result<Self, ProcessError> {
         let now = Instant::now();
         let database = Database::load(".db").await?;
@@ -42,7 +35,7 @@ impl Runtime for TokioRT {
         spawn(task);
     }
 
-    fn spawn_blocking<T, R>(task: T) -> impl Future<Output = Result<R, database::error::Error>>
+    fn spawn_blocking<T, R>(task: T) -> impl Future<Output = Result<R, ltmdb::Error>>
         where
             T: FnOnce() -> R + Send + 'static,
             R: Send + 'static 

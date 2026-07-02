@@ -21,7 +21,7 @@ pub struct DungeonInfo {
 async fn dungeon_info(
     body: Bytes,
     client: Data<Client>,
-    cache: Data<CacheRouter<TokioRT>>,
+    cache: Data<CacheRouter>,
 ) -> actix_web::Result<impl Responder> {
     let mut body_vec = body.to_vec();
     let parsed_uuids = from_borrowed_value::<Vec<Uuid>>(to_borrowed_value(&mut body_vec).map_err(ErrorInternalServerError)?).map_err(ErrorInternalServerError)?;

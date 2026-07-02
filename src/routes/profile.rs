@@ -1,10 +1,10 @@
 use std::{str::FromStr, sync::LazyLock, time::{Duration, Instant}};
 
 use actix_web::{error::ErrorInternalServerError, get, web::{Bytes, Data, Path}, Responder};
-use database::{cache::Database, runtime::Runtime};
+use ltmdb::{Database, Runtime};
 use uuid::Uuid;
 
-use crate::{cache::{cache_key::CacheKey, cache_router::{CacheRouter, TokioRT}, compression::{compress_data, extract_data}, expires::Expires}, error::ProcessError, logging::{log, LogMessage}, request_utils::{env_var, json_response, request}};
+use crate::{cache::{cache_key::CacheKey, cache_router::CacheRouter, compression::{compress_data, extract_data}, expires::Expires}, error::ProcessError, logging::{log, LogMessage}, request_utils::{env_var, json_response, request}};
 
 /// Database time to live for profile queries in seconds.
 pub static PROFILE_DB_TTL: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs(env_var("PROFILE_DB_TTL", 3600)));
@@ -49,7 +49,7 @@ impl CacheKey for ProfileKey {
 #[get("/get/{uuid}")]
 async fn profile(
     path: Path<String>,
-    cache: Data<CacheRouter<TokioRT>>,
+    cache: Data<CacheRouter>,
 ) -> actix_web::Result<impl Responder> {
     let uuid = Uuid::from_str(&path.into_inner()).map_err(ErrorInternalServerError)?;
     let data = cache.get(ProfileKey(uuid)).await?;

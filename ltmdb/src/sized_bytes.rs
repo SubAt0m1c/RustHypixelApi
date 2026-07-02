@@ -1,6 +1,6 @@
 use bytes::Buf;
 
-pub struct SizedBytes<const N: usize> {
+pub(crate) struct SizedBytes<const N: usize> {
     inner: [u8; N],
     cursor: usize
 }
@@ -13,11 +13,12 @@ impl<const N: usize> Buf for SizedBytes<N> {
     
     #[inline]
     fn chunk(&self) -> &[u8] {
-        &self.inner[self.cursor..]
+        &self.inner[self.cursor..N]
     }
     
     #[inline]
     fn advance(&mut self, cnt: usize) {
+        assert!(cnt <= self.remaining(), "cnt {:?} must be less than remaining {:?}", cnt, self.remaining());
         self.cursor += cnt
     }
 }

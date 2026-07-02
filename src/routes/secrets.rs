@@ -1,13 +1,13 @@
 use crate::cache::cache_key::CacheKey;
-use crate::cache::cache_router::{CacheRouter, TokioRT};
+use crate::cache::cache_router::CacheRouter;
 use crate::cache::expires::Expires;
 use crate::error::ProcessError;
 use crate::request_utils::{env_var, json_response, request};
 use actix_web::error::ErrorInternalServerError;
 use actix_web::web::{Bytes, BytesMut, Data, Path};
 use actix_web::{get, Responder};
-use database::cache::Database;
-use database::runtime::Runtime;
+use ltmdb::Database;
+use ltmdb::Runtime;
 use serde_json::to_vec;
 use simd_json::{BorrowedValue, to_borrowed_value};
 use simd_json::derived::ValueObjectAccess;
@@ -44,7 +44,7 @@ impl CacheKey for SecretsKey {
 #[get("/secrets/{uuid}")]
 async fn secrets(
     path: Path<String>,
-    cache: Data<CacheRouter<TokioRT>>,
+    cache: Data<CacheRouter>,
 ) -> actix_web::Result<impl Responder> {
     let uuid = Uuid::from_str(&path.into_inner()).map_err(ErrorInternalServerError)?;
     let data = cache.get(SecretsKey(uuid)).await?;

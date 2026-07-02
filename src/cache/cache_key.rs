@@ -1,5 +1,5 @@
 use actix_web::web::Bytes;
-use database::{cache::Database, runtime::Runtime};
+use ltmdb::{Database, Runtime};
 use uuid::Uuid;
 
 use crate::{cache::{UuidKey, expires::Expires}, error::ProcessError};
@@ -14,10 +14,10 @@ pub trait CacheKey {
     
     fn expires(&self) -> Expires;
 
-    /// Ran when this key results in a cache miss on the memory cache.
+    /// This function is run when this key results in a cache miss on the memory cache.
     /// If this function returns Ok(), it will add the Bytes into the memory cache.
     /// Otherwise, no entry will be added to the memory cache and the error should be
-    /// propegated up.
+    /// propegated upwards.
     async fn get_or_insert<RT: Runtime + Send + Sync + 'static>(&self, db: &Database<RT>) -> Result<Bytes, ProcessError>;
     
     fn key(&self) -> UuidKey {

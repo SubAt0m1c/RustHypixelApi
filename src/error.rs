@@ -51,8 +51,8 @@ impl From<SerdeError> for ProcessError {
     }
 }
 
-impl From<database::error::Error> for ProcessError {
-    fn from(value: database::error::Error) -> Self {
+impl From<ltmdb::Error> for ProcessError {
+    fn from(value: ltmdb::Error) -> Self {
         Self::DatabaseError(value.to_string())
     }
 }

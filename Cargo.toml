@@ -5,7 +5,7 @@ name = "hypixel_api"
 version = "0.1.0"
 edition = "2024"
 
-members = ["database"]
+members = ["ltmdb"]
 
 [dependencies]
 actix-web = { version = "4.13.0" }
@@ -22,7 +22,7 @@ serde = "1.0.228"
 heed = "0.22.1"
 tokio =  { version = "1.52.3", features = ["macros", "sync"] }
 dashmap = { version = "6.2.1", features = ["inline" ] }
-database = { path = "database" }
+ltmdb = { path = "ltmdb" }
 
 [profile.dev.package."*"]
 opt-level = 3

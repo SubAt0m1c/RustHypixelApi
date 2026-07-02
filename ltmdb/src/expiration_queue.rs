@@ -1,11 +1,10 @@
 use std::{collections::BinaryHeap, sync::Arc, time::Duration};
-use concurrent_slotmap::hyaline::Guard;
 use flume::{Receiver, TryRecvError};
 use futures::FutureExt;
 
-use crate::{cache::{DbInner, ParKey}, partition::Partition, runtime::SendRuntime, unix_secs};
+use crate::{db::{DbInner, ParKey}, runtime::SendRuntime, unix_secs};
 
-pub enum ExpCMD {
+pub(crate) enum ExpCMD {
     Schedule {
         time: u64,
         par_key: ParKey,
@@ -13,7 +12,7 @@ pub enum ExpCMD {
 }
 
 #[derive(PartialEq, Eq)]
-pub struct QueueEntry {
+pub(crate) struct QueueEntry {
     time: u64,
     par_key: ParKey
 }
@@ -31,7 +30,7 @@ impl PartialOrd for QueueEntry {
 }
 
 
-pub fn spawn_expiration_task<RT: SendRuntime>(cache_inner: Arc<DbInner<RT>>, rx: Receiver<ExpCMD>) {    
+pub(crate) fn spawn_expiration_task<RT: SendRuntime>(cache_inner: Arc<DbInner<RT>>, rx: Receiver<ExpCMD>) {    
     RT::spawn(async move {
         let mut heap: BinaryHeap<QueueEntry> = BinaryHeap::new();
         loop {
@@ -62,12 +61,7 @@ pub fn spawn_expiration_task<RT: SendRuntime>(cache_inner: Arc<DbInner<RT>>, rx:
 
                     let entry = heap.pop().expect("Should have just verified the heap is not empty");
 
-                    let purge = {
-                        let guard: Guard<'_> = cache_inner.partitions.pin();
-                        let partition: &Partition = cache_inner.partitions.remove(entry.par_key, &guard).expect("break ig?");
-                        partition.purge::<RT>(&cache_inner.entries)
-                    };
-                    purge.await.expect("Failed to purge file.");
+                    cache_inner.partitions.get_ref(entry.par_key).purge::<RT>(&cache_inner.entries).await.expect("Failed to purge file.");
                 }
             }
             
