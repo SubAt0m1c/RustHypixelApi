@@ -1,6 +1,7 @@
 use std::{collections::BinaryHeap, sync::Arc, time::Duration};
 use flume::{Receiver, TryRecvError};
-use futures::FutureExt;
+use futures_timer::Delay;
+use futures_util::FutureExt;
 
 use crate::{db::{DbInner, ParKey}, runtime::SendRuntime, unix_secs};
 
@@ -14,7 +15,8 @@ pub(crate) enum ExpCMD {
 #[derive(PartialEq, Eq)]
 pub(crate) struct QueueEntry {
     time: u64,
-    par_key: ParKey
+    par_key: ParKey,
+    retries: u64,
 }
 
 impl Ord for QueueEntry {
@@ -38,7 +40,7 @@ pub(crate) fn spawn_expiration_task<RT: SendRuntime>(cache_inner: Arc<DbInner<RT
                 match rx.try_recv() {
                     Ok(msg) => handle_message(msg, &mut heap),
                     Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => return, //todo: flush
+                    Err(TryRecvError::Disconnected) => return
                 }
             }
 
@@ -50,7 +52,7 @@ pub(crate) fn spawn_expiration_task<RT: SendRuntime>(cache_inner: Arc<DbInner<RT
                 continue;
             }
 
-            let next = heap.peek().expect("Should have verified queue has at least one entry").time;
+            let next = heap.peek().expect("Should have verified heap is not empty").time;
             let now = unix_secs();
 
             if next <= now {
@@ -59,21 +61,29 @@ pub(crate) fn spawn_expiration_task<RT: SendRuntime>(cache_inner: Arc<DbInner<RT
                         break
                     }
 
-                    let entry = heap.pop().expect("Should have just verified the heap is not empty");
+                    let entry = heap.pop().expect("Should have verified heap.peak() isn't None");
 
-                    cache_inner.partitions.get_ref(entry.par_key).purge::<RT>(&cache_inner.entries).await.expect("Failed to purge file.");
+                    if let Err(e) = cache_inner.partitions.get_ref(entry.par_key).purge::<RT>(&cache_inner.entries).await {
+                        eprintln!("Failed to delete partition: {e}");
+                        
+                        const INITIAL_BACKOFF: u64 = 5;     // 5 seconds
+                        const MAX_BACKOFF: u64 = 60 * 60;   // 1 hour
+                        
+                        let retries = entry.retries.saturating_add(1);
+                        let delay = INITIAL_BACKOFF << retries;
+                        if delay > MAX_BACKOFF { continue }
+                        
+                        heap.push(QueueEntry { time: now + delay, retries, ..entry });
+                    }
                 }
             }
             
             let duration_until_wake = Duration::from_secs(next.saturating_sub(now));
-            let sleep = futures_timer::Delay::new(duration_until_wake);
-
-            futures::select! {
+            let sleep = Delay::new(duration_until_wake);
+            
+            futures_util::select! {
                 res = rx.recv_async().fuse() => {
-                    match res {
-                        Ok(cmd) => handle_message(cmd, &mut heap),
-                        Err(_) => break
-                    }
+                    handle_message(res.expect("All handles to the expiration task should not be dropped!"), &mut heap);
                 }
 
                 _ = sleep.fuse() => continue, // we loop back, which will shortly purge the woken entry.
@@ -85,6 +95,6 @@ pub(crate) fn spawn_expiration_task<RT: SendRuntime>(cache_inner: Arc<DbInner<RT
 
 fn handle_message(msg: ExpCMD, queue: &mut BinaryHeap<QueueEntry>) {
     match msg {
-        ExpCMD::Schedule { time, par_key } => queue.push(QueueEntry { time, par_key, }),
+        ExpCMD::Schedule { time, par_key } => queue.push(QueueEntry { time, par_key, retries: 0 }),
     }
 }

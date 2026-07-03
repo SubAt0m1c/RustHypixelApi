@@ -15,7 +15,7 @@ impl CacheRouter {
     pub async fn load() -> Result<Self, ProcessError> {
         let now = Instant::now();
         let database = Database::load(".db").await?;
-        log(LogMessage::TimeElapsed { elapsed: now.elapsed(), name: "Database loaded in" });
+        log(LogMessage::TimeElapsed { elapsed: now.elapsed(), name: "database load" });
         Ok(Self { cache: MemoryCache::new(), database })
     }
 

@@ -31,7 +31,6 @@ impl FileHandle {
         })
     }
 
-    /// This function can be used in pathways that are already being run on a sync worker thread.
     pub fn new_sync(path: PathBuf) -> Result<Self> {
         let file = OpenOptions::new()
             .read(true)
@@ -45,14 +44,12 @@ impl FileHandle {
         })
     }
 
-    // buf + trait spam so chains dont need to be really concrete.
     pub fn append_from<RT: SendRuntime, B: Buf + Send + Sync + 'static>(&self, buf: B) ->  impl Future<Output = Result<u64>> + use<RT, B> {
         let inner = self.inner.clone();
         let len = buf.remaining() as u64;
         RT::spawn_blocking(move || {
-            let start = inner.offset.fetch_add(len, Ordering::Relaxed);
-            // SAFETY: We have ensured enough unique access room with offset reserving. 
-            unsafe { write_all_buf_at(&inner.file, start, buf)? }
+            let start = inner.offset.fetch_add(len, Ordering::Relaxed); // reserve unique space to prevent concurrent writes to the same location.
+            write_all_buf_at(&inner.file, start, buf)?;
             Ok::<_, Error>(start)
         }).flatten()
     }
@@ -71,8 +68,12 @@ impl FileHandle {
     }   
 }
 
-/// SAFETY: Caller must ensure the offset does not align with another concurrent write.
-unsafe fn write_all_buf_at<B: Buf>(
+/// Writes an entire buffer to a file at a specific offset.
+/// 
+/// The caller should ensure it has unique access to the offset and length it will write to. 
+/// If this is not enforced, the os will handle the concurrent writes, which may lead to data 
+/// loss.
+fn write_all_buf_at<B: Buf>(
     file: &File,
     mut offset: u64,
     mut buf: B,
@@ -80,7 +81,7 @@ unsafe fn write_all_buf_at<B: Buf>(
     while buf.has_remaining() {
         let mut iovecs = [IoSlice::new(&[]); 64];
         let n = buf.chunks_vectored(&mut iovecs);
-        let written = unsafe { writev_at(file, offset, &iovecs[..n])? };
+        let written = writev_at(file, offset, &iovecs[..n])?;
         offset += written as u64;
         buf.advance(written);
     }
@@ -103,8 +104,12 @@ fn read_exact(file: &File, mut offset: u64, mut buf: &mut [u8]) -> io::Result<()
     Ok(())
 }
 
-/// SAFETY: Caller must ensure the offset does not align with another concurrent write.
-unsafe fn writev_at(file: &File, mut offset: u64, iovecs: &[IoSlice]) -> io::Result<usize> {
+/// Attempts to write to a file from a specific offset. Returns the number of bytes written.
+/// 
+/// The caller should ensure it has unique access to the offset and length it will write to. 
+/// If this is not enforced, the os will handle the concurrent writes, which may lead to data 
+/// loss.
+fn writev_at(file: &File, mut offset: u64, iovecs: &[IoSlice]) -> io::Result<usize> {
     let mut total = 0;
 
     for io_slice in iovecs {

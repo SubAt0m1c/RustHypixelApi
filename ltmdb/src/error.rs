@@ -77,7 +77,8 @@ impl From<io::Error> for Error {
 }
 
 pub trait ResultExt {
-    /// maps a future returning any error into a future returning a database error.
+    /// maps a future returning any error that implements [`std::error::Error`] into a future returning a `ltmdb::Error`.
+    /// This mainly serves as a convienient way to turn any given Runtime's task results into something usable by the database.
     fn task_err<R, E: StdError + Send + Sync + 'static>(self) -> impl Future<Output = StdResult<R, Error>>
     where Self: Future<Output = StdResult<R, E>> + Sized
     {
@@ -86,8 +87,9 @@ pub trait ResultExt {
         }
     }
 
-    fn flatten<R, E: Into<Error> + Send + Sync + 'static>(self) -> impl Future<Output = StdResult<R, Error>>
-    where Self: Future<Output = StdResult<StdResult<R, Error>, E>> + Sized
+    /// flattens a future returning a `Result<Result<_, E: Into<Error>>, Error>` to a future returning `Result<_, Error>`
+    fn flatten<R, E1: Into<E2> + Send + Sync + 'static, E2>(self) -> impl Future<Output = StdResult<R, E2>>
+    where Self: Future<Output = StdResult<StdResult<R, E2>, E1>> + Sized
     {
         async move {
             self.await.map_err(Into::into).flatten()
@@ -95,4 +97,4 @@ pub trait ResultExt {
     }
 }
 
-impl<F: Future<Output = Result<R, E>>, R, E: StdError> ResultExt for F {}
+impl<F: Future> ResultExt for F {}

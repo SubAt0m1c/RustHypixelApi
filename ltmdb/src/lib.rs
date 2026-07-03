@@ -1,19 +1,17 @@
-//! ltmdb is a lifetime managed database.
+//! ltmdb is a lifetime managed key-value store.
 //! entries are mapped by their ttl (time to live) to a file.
 //! files are written to during a window, after which a new
-//! file begins being written to. After the time to live of
+//! file begins being written to. After the ttl of
 //! the file has passed, it is entirely deleted, removing all
 //! entries from that file.
 //! 
-//! Due to this, entries should not expect their lifetime
+//! Due to file-batched removals, entries should not expect their lifetime
 //! to match their ttl exactly, but rather be a "good enough"
 //! approximation. 
-//! 
-//! As async as possible, with file io being run by the db
-//! runtime.
 
 use std::{result::Result as StdResult, time::{Duration, SystemTime, UNIX_EPOCH}};
 
+mod hasher;
 mod error;
 mod expiration_queue;
 mod file_handle;
@@ -23,9 +21,11 @@ mod db;
 mod sized_bytes;
 mod runtime;
 
+pub use hasher::{RapidHash, rapidhash_nano};
 pub use error::{ Error, ErrorKind, ResultExt };
 pub use db::Database;
 pub use runtime::Runtime;
+pub use sized_bytes::SizedBytes;
 
 pub(crate) type Result<T> = StdResult<T, error::Error>;
 

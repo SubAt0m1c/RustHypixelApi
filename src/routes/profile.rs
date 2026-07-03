@@ -26,9 +26,8 @@ impl CacheKey for ProfileKey {
 
     async fn get_or_insert<RT: Runtime + Send + Sync + 'static>(&self, db: &Database<RT>) -> Result<actix_web::web::Bytes, crate::error::ProcessError> {
         let uuid_key = self.key();
-        let key = uuid_key.as_u128();
         let now = Instant::now();
-        let bytes = db.read(key).await?.map(|b| extract_data(&b)).transpose().map_err(|e| ProcessError::DatabaseError(e.to_string()))?;
+        let bytes = db.read(uuid_key).await?.map(|b| extract_data(&b)).transpose().map_err(|e| ProcessError::DatabaseError(e.to_string()))?;
         log(LogMessage::TimeElapsed { elapsed: now.elapsed(), name: "DB Read" });
         
         if let Some(db_data) = bytes {
@@ -39,7 +38,7 @@ impl CacheKey for ProfileKey {
         let bytes = request(uuid_key, format!("https://api.hypixel.net/v2/skyblock/profiles?uuid={}", self.uuid())).await?;
 
         let now = Instant::now();
-        db.insert(key, compress_data(&bytes), *PROFILE_DB_TTL).await?;
+        db.insert(uuid_key, compress_data(&bytes), *PROFILE_DB_TTL).await?;
         log(LogMessage::TimeElapsed { elapsed: now.elapsed(), name: "DB write" });
         
         Ok(bytes)

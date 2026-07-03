@@ -1367,8 +1367,8 @@ dependencies = [
  "concurrent-slotmap",
  "crossbeam-queue",
  "flume",
- "futures",
  "futures-timer",
+ "futures-util",
  "papaya",
  "portable-atomic",
 ]

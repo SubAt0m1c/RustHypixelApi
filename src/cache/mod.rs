@@ -1,5 +1,6 @@
 use std::{cmp::Ordering, fmt::Display, hash::{self, Hash}, time::Duration};
 
+use ltmdb::SizedBytes;
 use uuid::Uuid;
 
 use crate::cache::{expires::Expires};
@@ -38,6 +39,12 @@ impl PartialOrd for UuidKey {
 impl Ord for UuidKey {
     fn cmp(&self, other: &Self) -> Ordering {
         self.key.cmp(&other.key)
+    }
+}
+
+impl From<UuidKey> for SizedBytes {
+    fn from(value: UuidKey) -> Self {
+        SizedBytes::from(value.as_u128().to_be_bytes())
     }
 }
 

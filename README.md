@@ -8,7 +8,6 @@ Api key should be an environment variable. Per session can be set with `export A
 There are various other environment variables to control caching which will be seen when they defualt and log how they are using defaults, but they arent important and should be fine left as is.
 
 While initially made for [HateCheaters](https://github.com/SubAt0m1c/HateCheaters), and now [Odin](https://github.com/odtheking/Odin), it should work just fine for any other projects as long as the expected paths are the same.
-Large players may take ~1.2mb to store all profile data in the cache (after compression).
 
 By default this is expected to be run through a reverse proxy with port 8000. You will need to pass client ip through.
 The installation script will automatically handle installing nginx and setting this, however.

@@ -6,21 +6,29 @@ use flume::Sender;
 use papaya::{HashMap, LocalGuard};
 use portable_atomic::AtomicU128;
 
-use crate::{Result, db::ParKey, error::Error, expiration_queue::ExpCMD, partition::{Partition, PartitionEntry, PartitionMap, PartitionRef}, runtime::SendRuntime, unix_secs};
+use crate::{RapidHash, Result, db::ParKey, error::Error, expiration_queue::ExpCMD, partition::{Partition, PartitionEntry, PartitionMap, PartitionRef}, runtime::SendRuntime, sized_bytes::SizedBytes, unix_secs};
 
 const BUCKET_WINDOW: Duration = Duration::from_mins(1);
 
+/// A reference to an entry in the bucket map.
+/// 
+/// Contains a key to an entry the bucket map, and a reference to the bucket map.
+/// This provides an easy api to reference an entry without holding locks across
+/// awaits.
+/// 
+/// It may be possible to move the guard into the reference, enabling cross-function
+/// holding of guards without holding across awaits, but that hasn't been needed yet.
 pub(crate) struct BucketRef<'a> {
     key: u64,
-    buckets: &'a HashMap<u64, Bucket>,
+    buckets: &'a HashMap<u64, Bucket, RapidHash>,
 }
 
 impl<'a> BucketRef<'a> {
-    pub fn new(key: u64, buckets: &'a HashMap<u64, Bucket>) -> Self {
+    pub fn new(key: u64, buckets: &'a HashMap<u64, Bucket, RapidHash>) -> Self {
         Self { key, buckets, }
     }
 
-    pub async fn insert<RT: SendRuntime>(&self, guard: LocalGuard<'_>, entry_key: u128, entry_value: Bytes, partition_map: &PartitionMap, exp_tx: &Sender<ExpCMD>) -> Result<(ParKey, PartitionEntry)> {
+    pub async fn insert<RT: SendRuntime>(&self, guard: LocalGuard<'_>, entry_key: SizedBytes, entry_value: Bytes, partition_map: &PartitionMap, exp_tx: &Sender<ExpCMD>) -> Result<(ParKey, PartitionEntry)> {
         let partition = self.get_live_partition::<RT>(guard, unix_secs(), partition_map, exp_tx).await?;
         let partition_entry = partition.insert::<RT>(entry_key, entry_value).await?;
         
@@ -52,6 +60,7 @@ impl<'a> BucketRef<'a> {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct ActivePartition {
     value: AtomicU128,
 }
@@ -82,9 +91,9 @@ impl ActivePartition {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct Bucket {
     live_partition: ActivePartition,
-    // live_window: Duration,
     ttl: Duration,
     path: PathBuf,
 }

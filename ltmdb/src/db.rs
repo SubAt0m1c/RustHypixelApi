@@ -3,12 +3,12 @@ use std::{fs, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
 use bytes::Bytes;
 use concurrent_slotmap::{Key, SlotId};
 use flume::Sender;
-use futures::{StreamExt, stream::FuturesUnordered};
+use futures_util::{StreamExt, stream::FuturesUnordered};
 use papaya::{HashMap, LocalGuard};
 
-use crate::{Result, bucket::{ActivePartition, Bucket, BucketRef}, error::Error, expiration_queue::{ExpCMD, spawn_expiration_task}, partition::{Partition, PartitionEntry, PartitionMap}, runtime::{Runtime, SendRuntime}, unix_secs};
+use crate::{RapidHash, Result, bucket::{ActivePartition, Bucket, BucketRef}, error::Error, expiration_queue::{ExpCMD, spawn_expiration_task}, partition::{Partition, PartitionEntry, PartitionMap}, runtime::{Runtime, SendRuntime}, sized_bytes::SizedBytes, unix_secs};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ParKey(SlotId);
 impl ParKey {
     #[inline]
@@ -40,7 +40,7 @@ pub(crate) struct CacheEntry {
     position: PartitionEntry,
 }
 
-/// Lifetime managed database.
+/// Lifetime managed key-value store.
 /// Async down to file io (handled by input runtime)
 /// Deletions are batched by a windowed time (default 1 minute)
 #[derive(Clone)]
@@ -48,15 +48,10 @@ pub struct Database<RT: Runtime + Send + Sync + 'static> {
     inner: Arc<DbInner<RT>>
 }
 
-/// hashmaps for these are accessed via _sync variants because locks never need to be held 
-/// across awaits, so the overhead will likely cost more than the operation holding the lock.
-/// 
-/// while scc recomends against this, tokio's docs recommend this in their async mutex/rwlock
-/// docs. Going with tokio here since it makes sense and scc doesn't give a reason.
 pub(super) struct DbInner<RT: SendRuntime> {
     pub(super) partitions: PartitionMap,
-    pub(super) entries: HashMap<u128, CacheEntry>,
-    buckets: HashMap<u64, Bucket>,
+    pub(super) entries: HashMap<SizedBytes, CacheEntry, RapidHash>,
+    buckets: HashMap<u64, Bucket, RapidHash>,
     exp_tx: Sender<ExpCMD>,
     path: PathBuf,
     _phantom: PhantomData<RT>
@@ -65,8 +60,8 @@ pub(super) struct DbInner<RT: SendRuntime> {
 impl<RT: SendRuntime> DbInner<RT> {
     pub(super) fn new(exp_tx: Sender<ExpCMD>, path: impl Into<PathBuf>) -> Self {
         Self {
-            buckets: HashMap::new(),
-            entries: HashMap::new(),
+            buckets: HashMap::with_hasher(RapidHash::default()),
+            entries: HashMap::with_hasher(RapidHash::default()),
             partitions: PartitionMap::new(180),
             exp_tx,
             path: path.into(),
@@ -90,10 +85,12 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
             let entry = entry?;
             if !entry.file_type()?.is_dir() { continue }
 
-            let Some(bucket_id) = entry.file_name().into_string().ok().and_then(|n| n.parse::<u64>().ok()) else { continue };
+            let Some(bucket_millis) = entry.file_name().into_string().ok().and_then(|n| n.parse::<u64>().ok()) else { continue };
             let bucket_path = entry.path();
-            let bucket_ttl = Duration::from_millis(bucket_id);
-            let mut active = ActivePartition::new(ParKey::from_id(SlotId::INVALID), 0);
+            let bucket_ttl = Duration::from_millis(bucket_millis);
+            let bucket_id = bucket_ttl.as_secs();
+            let mut last_insertion = 0;
+            let mut last_par_key = ParKey::from_id(SlotId::INVALID);
 
             let inner = inner.clone();
             bucket_futures.push(async move {
@@ -113,9 +110,12 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
                     let (keys, partition) = res?;
                     
                     let par_key = inner.partitions.insert(partition, &inner.partitions.pin());
-                    inner.exp_tx.send(ExpCMD::Schedule { time: insertion + bucket_ttl.as_secs(), par_key }).map_err(Error::queue)?;
+                    inner.exp_tx.send(ExpCMD::Schedule { time: insertion + bucket_id, par_key }).map_err(Error::queue)?;
 
-                    active = ActivePartition::new(par_key, insertion);  // the last file should be the most recent, and thus the last active one.
+                    if insertion > last_insertion {
+                        last_insertion = insertion;
+                        last_par_key = par_key;
+                    }
                     
                     let guard = inner.entries.guard();
                     for (key, entry) in keys {
@@ -124,13 +124,17 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
                     }
                 }
 
-                let _ = inner.buckets.insert(bucket_id, Bucket::new_existing(active, bucket_ttl, entry.path()), &inner.buckets.guard());
+                let active = ActivePartition::new(last_par_key, last_insertion);
+                let bucket = Bucket::new_existing(active, bucket_ttl, entry.path());
+                inner.buckets.pin().insert(bucket_id, bucket);
                 Ok::<_, Error>(())
             });
         }
 
-        while let Some(res) = bucket_futures.next().await { res?; }
-
+        while let Some(res) = bucket_futures.next().await {
+            if let Err(e) = res { return Err(e) }
+        }
+        
         spawn_expiration_task::<RT>(inner.clone(), rx);
         Ok(Self { inner })
     }
@@ -139,8 +143,8 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
     pub fn create_new(path: impl Into<PathBuf>) -> Self {
         let (exp_tx, rx) = flume::unbounded::<ExpCMD>();
         let inner = Arc::new(DbInner {
-            buckets: HashMap::new(),
-            entries: HashMap::new(),
+            buckets: HashMap::with_hasher(RapidHash::default()),
+            entries: HashMap::with_hasher(RapidHash::default()),
             partitions: PartitionMap::new(180),
             exp_tx,
             path: path.into(),
@@ -153,7 +157,7 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
     }
 
     /// inserts an item into the database with a given ttl.
-    pub async fn insert(&self, key: u128, value: impl Into<Bytes>, ttl: Duration) -> Result<()> {
+    pub async fn insert(&self, key: impl Into<SizedBytes>, value: impl Into<Bytes>, ttl: Duration) -> Result<()> {
         let now = unix_secs();
         let value = value.into();
         let cache_id = ttl.as_secs();
@@ -161,15 +165,16 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
         let guard = self.get_or_create_bucket(cache_id, ttl, now).await?;
 
         let bucket_ref = BucketRef::new(cache_id, &self.inner.buckets);
-        let (partition_key, position) = bucket_ref.insert::<RT>(guard, key, value, &self.inner.partitions, &self.inner.exp_tx).await?;
-        let _ = self.inner.entries.insert(key, CacheEntry { partition_key, position }, &self.inner.entries.guard());
+        let key = key.into();
+        let (partition_key, position) = bucket_ref.insert::<RT>(guard, key.clone(), value, &self.inner.partitions, &self.inner.exp_tx).await?;
+        let _ = self.inner.entries.pin().insert(key, CacheEntry { partition_key, position });
         Ok(())
     }
 
     /// Attempts to get an entry from the database.
     /// Returns Ok(None) if the entry isn't in the database.
-    pub async fn read(&self, key: u128) -> Result<Option<Bytes>> {
-        let Some(CacheEntry { partition_key, position }) = self.inner.entries.get(&key, &self.inner.entries.guard()).map(|e|  *e) else {
+    pub async fn read(&self, key: impl Into<SizedBytes>) -> Result<Option<Bytes>> {
+        let Some(CacheEntry { partition_key, position }) = self.inner.entries.pin().get(&key.into()).map(|e|  *e) else {
             return Ok(None)
         };
 

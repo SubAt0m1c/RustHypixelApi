@@ -5,10 +5,10 @@ use concurrent_slotmap::SlotMap;
 use crossbeam_queue::SegQueue;
 use papaya::HashMap;
 
-use crate::{Error, ErrorKind, Result, db::{CacheEntry, ParKey}, file_handle::FileHandle, runtime::SendRuntime, sized_bytes::SizedBytes};
+use crate::{Error, ErrorKind, RapidHash, Result, db::{CacheEntry, ParKey}, file_handle::FileHandle, runtime::SendRuntime, sized_bytes::SizedBytes};
 
-const BUFFER_SIZE: usize = 8 * 1024 * 1024; // 8mb
-const ENTRYMETADATALENGTH: usize = size_of::<u128>() + size_of::<u64>() + size_of::<u64>();
+const KEY_LEN_SIZE: usize = size_of::<u64>();
+const VALUE_LEN_SIZE: usize = size_of::<u64>();
 
 pub(crate) struct PartitionMap {
     map: SlotMap<ParKey, Partition>
@@ -52,17 +52,15 @@ impl<'a> PartitionRef<'a> {
         self.key
     }
 
-    pub async fn insert<RT: SendRuntime>(&self, entry_key: u128, entry_value: Bytes) -> Result<PartitionEntry> {
-        let key_len = size_of::<u128>() as u64;
-        
+    pub async fn insert<RT: SendRuntime>(&self, entry_key: SizedBytes, entry_value: Bytes) -> Result<PartitionEntry> {        
+        let key_len = entry_key.len() as u64;
         let key_len_buf = SizedBytes::from(key_len.to_be_bytes());
-        let key_buf = SizedBytes::from(entry_key.to_be_bytes());
         
         let value_len = entry_value.len() as u64;
         let value_len_buf = SizedBytes::from(value_len.to_be_bytes());
 
-        // this is chained to avoid allocating and doing nonsense to another buffer with the input value.
-        let chain = Buf::chain(key_len_buf, key_buf)
+        // Chaining here avoids the allocation/move of a large key and/or value required to put them in one buffer.
+        let chain = Buf::chain(key_len_buf, entry_key.clone())
             .chain(value_len_buf)
             .chain(entry_value);
 
@@ -71,7 +69,7 @@ impl<'a> PartitionRef<'a> {
         self.insert_key(entry_key);
         
         Ok(PartitionEntry {
-            position: write_location + ENTRYMETADATALENGTH as u64,
+            position: write_location + KEY_LEN_SIZE as u64 + key_len + VALUE_LEN_SIZE as u64,
             value_len: value_len as usize
         })
     }
@@ -89,7 +87,7 @@ impl<'a> PartitionRef<'a> {
     /// This removes all keys from this partition that are shared by the entries dashmap
     /// After removing these keys, it returns a future to a pending file deletion.
     /// This will delete keys immedietly without being polled and on poll will delete the file.
-    pub async fn purge<RT: SendRuntime>(&self, entries: &HashMap<u128, CacheEntry>) -> Result<()> {
+    pub async fn purge<RT: SendRuntime>(&self, entries: &HashMap<SizedBytes, CacheEntry, RapidHash>) -> Result<()> {
         let fut = {
             let guard = self.partitions.pin();
             let partition = self.partitions.get(self.key, &guard).ok_or(Error::PARTITION_NOT_FOUND)?;
@@ -112,14 +110,14 @@ impl<'a> PartitionRef<'a> {
         fut.await
     }
 
-    fn insert_key(&self, key: u128) {
+    fn insert_key(&self, key: SizedBytes) {
         self.partitions.get(self.key, &self.partitions.pin()).inspect(|b| b.keys.push(key));
     }
 }
 
 pub(crate) struct Partition {
     pub file: FileHandle,
-    pub keys: SegQueue<u128>
+    pub keys: SegQueue<SizedBytes>
 }
 
 impl Partition {
@@ -132,25 +130,36 @@ impl Partition {
     }
 
     /// creates a partition file by reading an existing file. Returns a vec of key/entry pairs it contains.
-    pub fn from_file(path: PathBuf) -> Result<(Vec<(u128, PartitionEntry)>, Self)> {
-        let mut file = File::options().read(true).open(&path)?;
-        let mut buffer = BytesMut::with_capacity(8 * 1024 * 1024);
-        let mut entries: Vec<(u128, PartitionEntry)> = Vec::new();
-        let keys: SegQueue<u128> = SegQueue::new();
-        let mut position: usize = 0;
+    pub fn from_file(path: PathBuf) -> Result<(Vec<(SizedBytes, PartitionEntry)>, Self)> {
+        const BUFFER_SIZE: usize = 8 * 1024 * 1024; // 8mb
         
+        let mut file = File::options().read(true).open(&path)?;
+        let mut buffer = BytesMut::with_capacity(BUFFER_SIZE);
+        let mut entries: Vec<(SizedBytes, PartitionEntry)> = Vec::new();
+        let keys: SegQueue<SizedBytes> = SegQueue::new();
+        let mut position: usize = 0;
+
         loop {
             let read = fill(&mut file, &mut buffer)?; 
             if read == 0 { break; } // EOF
 
-            if buffer.len() <= ENTRYMETADATALENGTH { continue } // attempt to refill the buffer if it came up short
-            position += ENTRYMETADATALENGTH;
+            // Attempt to refill the buffer if it isnt long enough to read all needed metadata
+            if buffer.len() < KEY_LEN_SIZE { continue }
+            let key_len = u64::from_be_bytes(buffer.chunk()[..KEY_LEN_SIZE].try_into().expect("Should have verified buffer is long enough")) as usize; 
+            let entry_metadata_len = KEY_LEN_SIZE + key_len + VALUE_LEN_SIZE;
             
-            let _key_len = buffer.get_u64();
-            let key = buffer.get_u128();
-            keys.push(key);
-            let value_len = buffer.get_u64() as usize;
+            // Reserve space if the entry metadata is longer than `BUFFER_SIZE`
+            if buffer.capacity() < entry_metadata_len { buffer.reserve(entry_metadata_len - buffer.len()); }
+            if buffer.len() < entry_metadata_len { continue }
 
+            position += entry_metadata_len;
+            
+            buffer.advance(KEY_LEN_SIZE); // we previously already got key length and dont need to get it again, just advance as if we did.
+            let key = SizedBytes::from(&buffer.chunk()[..key_len]);
+            buffer.advance(key_len);
+            keys.push(key.clone());
+            
+            let value_len = buffer.get_u64() as usize;
             if buffer.remaining() >= value_len {
                 buffer.advance(value_len);
             } else {
@@ -173,7 +182,12 @@ impl Partition {
 }
 
 fn fill<R: Read>(reader: &mut R, buf: &mut BytesMut) -> io::Result<usize> {
-    let _ = buf.try_reclaim(BUFFER_SIZE); // we dont really care if it reclaimed every byte, it just needs to try to reclaim as much as possible.
+    /// This is how much space we check the buffer has before attempting to reclaim.
+    /// This could be able be optimized out, only reclaiming when we dont have the
+    /// space to store the next entrys metadata exactly, but since this is only on
+    /// db load, im not too worried about possible extra syscalls.
+    const RECLAIM_SIZE: usize = 512 * 1024; // 512kb
+    let _ = buf.try_reclaim(RECLAIM_SIZE); // we dont really care if it reclaimed every byte, just enough to generally ensure we get the next entry's metadata.
     
     let spare = buf.spare_capacity_mut();
 
@@ -184,9 +198,9 @@ fn fill<R: Read>(reader: &mut R, buf: &mut BytesMut) -> io::Result<usize> {
             spare.len(),
         )
     };
-
+    
     let n = reader.read(dst)?;
-
+    
     // SAFETY: Read::read returns the number of written bytes.
     unsafe {
         buf.set_len(buf.len() + n);
