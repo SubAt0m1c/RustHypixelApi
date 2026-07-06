@@ -85,8 +85,6 @@ fn write_all_buf_at<B: Buf>(
         offset += written as u64;
         buf.advance(written);
     }
-
-    file.write_vectored(bufs)
     
     Ok(())
 }
@@ -111,12 +109,18 @@ fn read_exact(file: &File, mut offset: u64, mut buf: &mut [u8]) -> io::Result<()
 /// The caller should ensure it has unique access to the offset and length it will write to. 
 /// If this is not enforced, the os will handle the concurrent writes, which may lead to data 
 /// loss.
-fn writev_at(file: &File, mut offset: u64, iovecs: &[IoSlice]) -> io::Result<usize> {
-    let mut total = 0;
+fn writev_at<B: Buf>(file: &File, offset: u64, buffer: &mut B) -> io::Result<usize> {
+    let written: usize;
 
     #[cfg(unix)]
     {
-        total += std::os::unix::fs::FileExt::write_vectored_at(file, io_slice, offset)?;
+        use nix::sys::uio::pwritev;
+        
+        let mut iovecs = [IoSlice::new(&[]); 64];
+        let n = buffer.chunks_vectored(&mut iovecs);
+
+        written = pwritev(file, &iovecs[..n], offset as i64)?;
+        buffer.advance(written);
     }
 
     #[cfg(windows)]
@@ -134,7 +138,7 @@ fn writev_at(file: &File, mut offset: u64, iovecs: &[IoSlice]) -> io::Result<usi
         }
     }
 
-    Ok(total)
+    Ok(written)
 }
 
 fn read_at(file: &File, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
