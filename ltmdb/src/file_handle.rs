@@ -119,6 +119,8 @@ fn read_exact(file: &File, mut offset: u64, mut buf: &mut [u8]) -> io::Result<()
 
 #[cfg(unix)]
 fn writev_at<B: Buf>(file: &File, offset: u64, buf: &B) -> io::Result<usize> {
+    use std::io::IoSlice;
+
     use nix::sys::uio::pwritev;
     
     let mut iovecs = [IoSlice::new(&[]); 64];
