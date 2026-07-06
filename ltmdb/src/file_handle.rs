@@ -1,4 +1,4 @@
-use std::{fs::{self, File, OpenOptions}, io::{self, ErrorKind, IoSlice, Write}, path::PathBuf, sync::{Arc, atomic::{AtomicU64, Ordering}}};
+use std::{fs::{self, File, OpenOptions}, io::{self, ErrorKind}, path::PathBuf, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 
 use bytes::{Buf, BytesMut};
 use crate::{Result, ResultExt, error::Error, runtime::SendRuntime};
@@ -73,17 +73,30 @@ impl FileHandle {
 /// The caller should ensure it has unique access to the offset and length it will write to. 
 /// If this is not enforced, the os will handle the concurrent writes, which may lead to data 
 /// loss.
+#[allow(unused_mut)]
 fn write_all_buf_at<B: Buf>(
     file: &File,
     mut offset: u64,
     mut buf: B,
 ) -> io::Result<()> {
-    while buf.has_remaining() {
-        let mut iovecs = [IoSlice::new(&[]); 64];
-        let n = buf.chunks_vectored(&mut iovecs);
-        let written = writev_at(file, offset, &iovecs[..n])?;
-        offset += written as u64;
-        buf.advance(written);
+    #[cfg(unix)]
+    {
+        while buf.has_remaining() {
+            let written = writev_at(file, offset, &buf)?;
+            buf.advance(written);
+            offset += written as u64;
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileExt;
+        
+        while buf.has_remaining() {
+            let written = file.seek_write(&buf.chunk(), offset)?;
+            buf.advance(written);
+            offset += written as u64;
+        }
     }
     
     Ok(())
@@ -104,40 +117,14 @@ fn read_exact(file: &File, mut offset: u64, mut buf: &mut [u8]) -> io::Result<()
     Ok(())
 }
 
-/// Attempts to write to a file from a specific offset. Returns the number of bytes written.
-/// 
-/// The caller should ensure it has unique access to the offset and length it will write to. 
-/// If this is not enforced, the os will handle the concurrent writes, which may lead to data 
-/// loss.
-fn writev_at<B: Buf>(file: &File, offset: u64, buffer: &mut B) -> io::Result<usize> {
-    let written: usize;
+#[cfg(unix)]
+fn writev_at<B: Buf>(file: &File, offset: u64, buf: &B) -> io::Result<usize> {
+    use nix::sys::uio::pwritev;
+    
+    let mut iovecs = [IoSlice::new(&[]); 64];
+    let n = buf.chunks_vectored(&mut iovecs);
 
-    #[cfg(unix)]
-    {
-        use nix::sys::uio::pwritev;
-        
-        let mut iovecs = [IoSlice::new(&[]); 64];
-        let n = buffer.chunks_vectored(&mut iovecs);
-
-        written = pwritev(file, &iovecs[..n], offset as i64)?;
-        buffer.advance(written);
-    }
-
-    #[cfg(windows)]
-    {
-        for io_slice in iovecs {
-            let mut slice = io_slice.as_ref();
-
-            while !slice.is_empty() {
-                let n = std::os::windows::fs::FileExt::seek_write(file, io_slice, offset)?;
-                
-                offset += n as u64;
-                total += n;
-                slice = &slice[n..];
-            }
-        }
-    }
-
+    let written = pwritev(file, &iovecs[..n], offset as i64)?;
     Ok(written)
 }
 

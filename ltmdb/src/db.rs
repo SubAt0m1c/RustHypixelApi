@@ -13,7 +13,14 @@ pub struct ParKey(SlotId);
 impl ParKey {
     #[inline]
     pub fn new(index: u32, generation: u32) -> Self {
-        Self(SlotId::new(index, generation))
+        let key = if generation & SlotId::STATE_MASK == SlotId::OCCUPIED_TAG {
+            // SAFETY: Just checked that generation is occupied
+            unsafe { SlotId::new_unchecked(index, generation) } 
+        } else {
+            SlotId::INVALID
+        };
+        
+        Self(key)
     }
 
     #[inline]

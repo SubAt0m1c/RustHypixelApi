@@ -52,19 +52,37 @@ impl<'a> PartitionRef<'a> {
         self.key
     }
 
-    pub async fn insert<RT: SendRuntime>(&self, entry_key: SizedBytes, entry_value: Bytes) -> Result<PartitionEntry> {        
+    pub async fn insert<RT: SendRuntime>(&self, entry_key: SizedBytes, entry_value: Bytes) -> Result<PartitionEntry> {
         let key_len = entry_key.len() as u64;
-        let key_len_buf = SizedBytes::from(key_len.to_be_bytes());
-        
         let value_len = entry_value.len() as u64;
-        let value_len_buf = SizedBytes::from(value_len.to_be_bytes());
 
-        // Chaining here avoids the allocation/move of a large key and/or value required to put them in one buffer.
-        let chain = Buf::chain(key_len_buf, entry_key.clone())
-            .chain(value_len_buf)
-            .chain(entry_value);
+        let buf;
+        #[cfg(unix)]
+        {
+            let key_len_buf = SizedBytes::from(key_len.to_be_bytes());
+            let value_len_buf = SizedBytes::from(value_len.to_be_bytes());
+    
+            // Chaining here avoids the allocation/move of a large key and/or value required to put them in one buffer, but this only helps when we have pwritev support.
+            buf = Buf::chain(key_len_buf, entry_key.clone())
+                .chain(value_len_buf)
+                .chain(entry_value);  
+        }
+        
+        #[cfg(windows)]
+        {
+            use bytes::BufMut;
 
-        let write_location = self.append_from::<RT, _>(chain).await?;
+            let mut buffer = BytesMut::with_capacity(KEY_LEN_SIZE + entry_key.len() + VALUE_LEN_SIZE + entry_value.len());
+            buffer.put_u64(key_len);
+            buffer.put_slice(&entry_key);
+            buffer.put_u64(value_len);
+            buffer.put(entry_value);
+
+            // writing a whole vector at once reduces syscalls; a chain would require each chunk to be written individually.
+            buf = buffer.freeze();
+        }
+        
+        let write_location = self.append_from::<RT, _>(buf).await?;
 
         self.insert_key(entry_key);
         

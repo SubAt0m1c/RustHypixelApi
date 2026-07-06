@@ -12,6 +12,7 @@ futures-timer = "3.0.4"
 futures-util = { version = "0.3.32", default-features = false, features = ["alloc", "async-await", "async-await-macro"] }
 papaya = "0.2.4"
 portable-atomic = "1.13.1"
+
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31.3", features = ["uio"]}
 
