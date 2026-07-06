@@ -1,3 +1,10 @@
+use actix_governor::{Governor, GovernorConfigBuilder};
+use actix_web::{App, HttpServer, middleware::from_fn, web::Data};
+use mimalloc::MiMalloc;
+use tokio::sync::OnceCell;
+
+use crate::{cache::cache_router::CacheRouter, key_extractor::RealKeyExtractor, request_utils::env_var, routes::{profile::profile, secrets::secrets}};
+
 mod cache;
 mod key_extractor;
 mod routes;
@@ -5,18 +12,6 @@ mod timer;
 mod request_utils;
 mod logging;
 mod error;
-
-use crate::cache::cache_router::CacheRouter;
-use crate::key_extractor::RealKeyExtractor;
-use crate::request_utils::env_var;
-use crate::routes::profile::profile;
-use crate::routes::secrets::secrets;
-use actix_governor::{Governor, GovernorConfigBuilder};
-use actix_web::middleware::from_fn;
-use actix_web::web::Data;
-use actix_web::{App, HttpServer};
-use mimalloc::MiMalloc;
-use tokio::sync::OnceCell;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;

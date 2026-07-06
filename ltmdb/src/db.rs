@@ -99,21 +99,22 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
                 for entry in RT::spawn_blocking(move || fs::read_dir(bucket_path)).await?? {
                     let entry = entry?;
                     if !entry.file_type()?.is_file() { continue }
-                    let Some(insertion) = entry.file_name().into_string().ok().and_then(|n| n.parse::<u64>().ok()) else { continue };
+                    let Some(insert_time) = entry.file_name().into_string().ok().and_then(|n| n.parse::<u64>().ok()) else { continue };
 
                     partition_futures.push(async move {
-                        (insertion, RT::spawn_blocking(move || Partition::from_file(entry.path())).await.flatten())
+                        let partition_res = RT::spawn_blocking(move || Partition::from_file(entry.path())).await.flatten();
+                        (insert_time, partition_res)
                     });
                 }
                 
-                while let Some((insertion, res)) = partition_futures.next().await {
-                    let (keys, partition) = res?;
+                while let Some((insert_time, partition_res)) = partition_futures.next().await {
+                    let (keys, partition) = partition_res?;
                     
                     let par_key = inner.partitions.insert(partition, &inner.partitions.pin());
-                    inner.exp_tx.send(ExpCMD::Schedule { time: insertion + bucket_id, par_key }).map_err(Error::queue)?;
+                    inner.exp_tx.send(ExpCMD::Schedule { time: insert_time + bucket_id, par_key }).map_err(Error::queue)?;
 
-                    if insertion > last_insertion {
-                        last_insertion = insertion;
+                    if insert_time > last_insertion {
+                        last_insertion = insert_time;
                         last_par_key = par_key;
                     }
                     

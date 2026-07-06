@@ -4,6 +4,10 @@ use bytes::{Buf, Bytes};
 
 const MAX_INLINE_WORD_LENGTH: usize = size_of::<Bytes>() - size_of::<usize>() - size_of::<u8>() - size_of::<u8>();
 
+/// cheaply-clonable wrapper around bytes.
+/// 
+/// Includes small buffer optimization for small buffers.
+/// uses a [`bytes::Bytes`] for large buffers.
 #[derive(Clone, Debug)]
 pub struct SizedBytes {
     inner: Inner

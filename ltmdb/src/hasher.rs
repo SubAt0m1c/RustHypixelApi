@@ -1,4 +1,4 @@
-//! reimplementation of rapidhash nano from [GitHub](https://github.com/Nicoshev/rapidhash/blob/master/rapidhash.h#L432)
+//! reimplementation of rapidhash nano from [GitHub](https://github.com/Nicoshev/rapidhash/blob/master/rapidhash.h#L432) under MIT license.
 //! (Nano because hashing more than 48 bytes is hardly expected)
 
 use std::{hash::{BuildHasher, Hasher, RandomState}, hint::cold_path, sync::LazyLock};
@@ -22,15 +22,16 @@ impl Hasher for RapidHash {
 
     #[inline(always)]
     fn write(&mut self, bytes: &[u8]) {
-        self.state = rapidhash_nano(self.state, bytes)
+        self.state = rapidhash_nano(self.state, bytes);
     }
 
-    /// added u64 since we directly use it. Saves on branch prediction. Could be implemented for the others.
+    // Direct u64 write since we use them for bucket keys and this is branchless.
+    // Could/Should be implemented for the others if we switch to generic keys.
     #[inline(always)]
     fn write_u64(&mut self, i: u64) {
         self.state ^= mix(self.state ^ RH2, RH1);
         self.state ^= size_of::<u64>() as u64;
-        self.state = finish(i, i, self.state, 8)
+        self.state = finish(i, i, self.state, 8);
     }
 }
 

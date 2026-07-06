@@ -1,22 +1,15 @@
-use crate::cache::cache_key::CacheKey;
-use crate::cache::cache_router::CacheRouter;
-use crate::cache::expires::Expires;
-use crate::error::ProcessError;
-use crate::request_utils::{env_var, json_response, request};
-use actix_web::error::ErrorInternalServerError;
-use actix_web::web::{Bytes, BytesMut, Data, Path};
-use actix_web::{get, Responder};
-use ltmdb::Database;
-use ltmdb::Runtime;
+use std::{str::FromStr, sync::LazyLock, time::Duration};
+
+use actix_web::{Responder, error::ErrorInternalServerError, get, web::{BytesMut, Data, Path}};
+use ltmdb::{Database, Runtime};
 use serde_json::to_vec;
-use simd_json::{BorrowedValue, to_borrowed_value};
-use simd_json::derived::ValueObjectAccess;
+use simd_json::{BorrowedValue, derived::ValueObjectAccess, to_borrowed_value};
 use uuid::Uuid;
-use std::str::FromStr;
-use std::sync::LazyLock;
+
+use crate::{cache::{cache_key::CacheKey, cache_router::CacheRouter, memory::CacheEntry}, error::ProcessError, request_utils::{env_var, json_response, request}};
 
 /// Cache time to live for secret queries in seconds. Secret queries do not query the database.
-pub static SECRETS_TTL_SECONDS: LazyLock<u8> = LazyLock::new(|| env_var("SECRETS_TTL_SECONDS", 120));
+pub static SECRETS_TTL_SECONDS: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs(env_var("SECRETS_TTL_SECONDS", 120)));
 
 struct SecretsKey(Uuid);
 
@@ -27,16 +20,12 @@ impl CacheKey for SecretsKey {
         self.0
     }
 
-    fn expires(&self) -> Expires {
-        Expires::new(*SECRETS_TTL_SECONDS)
-    }
-
-    async fn get_or_insert<RT: Runtime + Send + Sync + 'static>(&self, _: &Database<RT>) -> Result<Bytes, ProcessError> {
+    async fn get_or_insert<RT: Runtime + Send + Sync + 'static>(&self, _: &Database<RT>) -> Result<CacheEntry, ProcessError> {
         request(self.key(), format!("https://api.hypixel.net/v2/player?uuid={}", self.uuid())).await.and_then(|bytes| {
             let mut vec = BytesMut::from(bytes); // theoretically this doesnt copy since reqwest makes a new bytes? not sure.
             let json = to_borrowed_value(&mut vec)?;
             let formatted = &find_secrets(&json).ok_or(ProcessError::internal("Could not find secrets."))?;
-            Ok(Bytes::from(to_vec(formatted)?))
+            Ok(CacheEntry::from_vec(to_vec(formatted)?, *SECRETS_TTL_SECONDS))
         })
     }
 }

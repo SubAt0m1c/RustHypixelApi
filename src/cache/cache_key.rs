@@ -1,8 +1,7 @@
-use actix_web::web::Bytes;
 use ltmdb::{Database, Runtime};
 use uuid::Uuid;
 
-use crate::{cache::{UuidKey, expires::Expires}, error::ProcessError};
+use crate::{cache::{UuidKey, memory::CacheEntry}, error::ProcessError};
 
 pub trait CacheKey {
     /// flag for db storage/etc. 
@@ -11,16 +10,14 @@ pub trait CacheKey {
     const KEYFLAG: u8;
     
     fn uuid(&self) -> Uuid;
-    
-    fn expires(&self) -> Expires;
 
     /// This function is run when this key results in a cache miss on the memory cache.
     /// If this function returns Ok(), it will add the Bytes into the memory cache.
     /// Otherwise, no entry will be added to the memory cache and the error should be
     /// propegated upwards.
-    async fn get_or_insert<RT: Runtime + Send + Sync + 'static>(&self, db: &Database<RT>) -> Result<Bytes, ProcessError>;
+    async fn get_or_insert<RT: Runtime + Send + Sync + 'static>(&self, db: &Database<RT>) -> Result<CacheEntry, ProcessError>;
     
     fn key(&self) -> UuidKey {
-        UuidKey::encode(self.uuid(), Self::KEYFLAG, self.expires())
+        UuidKey::encode(self.uuid(), Self::KEYFLAG)
     }
 }

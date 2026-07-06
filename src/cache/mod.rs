@@ -1,21 +1,16 @@
-use std::{cmp::Ordering, fmt::Display, hash::{self, Hash}, time::Duration};
+use std::{cmp::Ordering, fmt::Display, hash::{self, Hash}};
 
 use ltmdb::SizedBytes;
 use uuid::Uuid;
 
-use crate::cache::{expires::Expires};
-
 pub mod compression;
 pub mod cache_router;
-pub mod expires;
-mod memory;
+pub mod memory;
 pub mod cache_key;
 
-// expires is explicitely ignored in equality and hashing.
 #[derive(Eq, Clone, Copy)]
 pub struct UuidKey {
-    expires: Expires,
-    key: u128,
+    key: u128
 }
 
 impl PartialEq for UuidKey {
@@ -55,7 +50,7 @@ impl UuidKey {
     /// uses the non-random bits in a uuid to encode a unique flag.
     /// this loses the data of the variant, but variants are basically
     /// never different in the big 26.
-    pub fn encode(id: Uuid, flag: u8, expires: Expires) -> Self {
+    pub fn encode(id: Uuid, flag: u8) -> Self {
         let f = flag as u128;
         let bit2 = ((f >> 2) & 1) << 79; // flags bit 79 (unused in version)
         let bit1 = ((f >> 1) & 1) << 63; // flags bit 63 (variant bit 1)
@@ -63,7 +58,6 @@ impl UuidKey {
 
         let key = (id.as_u128() & !FLAG_MASK) | bit2 | bit1 | bit0;
         Self {
-            expires,
             key: key
         }
     }
@@ -88,10 +82,6 @@ impl UuidKey {
     /// accurate uuid recovery.
     pub fn uuid(&self) -> Uuid {
         Uuid::from_u128((self.key & !FLAG_MASK) | RESTORE_MASK)
-    }
-
-    pub fn expires(&self) -> Duration {
-        self.expires.as_duration()
     }
 }
 

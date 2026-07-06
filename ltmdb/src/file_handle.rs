@@ -1,4 +1,4 @@
-use std::{fs::{self, File, OpenOptions}, io::{self, ErrorKind, IoSlice}, path::PathBuf, sync::{Arc, atomic::{AtomicU64, Ordering}}};
+use std::{fs::{self, File, OpenOptions}, io::{self, ErrorKind, IoSlice, Write}, path::PathBuf, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 
 use bytes::{Buf, BytesMut};
 use crate::{Result, ResultExt, error::Error, runtime::SendRuntime};
@@ -86,6 +86,8 @@ fn write_all_buf_at<B: Buf>(
         buf.advance(written);
     }
 
+    file.write_vectored(bufs)
+    
     Ok(())
 }
 
@@ -112,18 +114,23 @@ fn read_exact(file: &File, mut offset: u64, mut buf: &mut [u8]) -> io::Result<()
 fn writev_at(file: &File, mut offset: u64, iovecs: &[IoSlice]) -> io::Result<usize> {
     let mut total = 0;
 
-    for io_slice in iovecs {
-        let mut slice = io_slice.as_ref();
+    #[cfg(unix)]
+    {
+        total += std::os::unix::fs::FileExt::write_vectored_at(file, io_slice, offset)?;
+    }
 
-        while !slice.is_empty() {
-            #[cfg(windows)]
-            let n = std::os::windows::fs::FileExt::seek_write(file, io_slice, offset)?;
-            #[cfg(unix)]
-            let n = std::os::unix::fs::FileExt::write_at(file, io_slice, offset)?;
-            
-            offset += n as u64;
-            total += n;
-            slice = &slice[n..];
+    #[cfg(windows)]
+    {
+        for io_slice in iovecs {
+            let mut slice = io_slice.as_ref();
+
+            while !slice.is_empty() {
+                let n = std::os::windows::fs::FileExt::seek_write(file, io_slice, offset)?;
+                
+                offset += n as u64;
+                total += n;
+                slice = &slice[n..];
+            }
         }
     }
 
