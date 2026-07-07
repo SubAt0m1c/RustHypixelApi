@@ -1,4 +1,4 @@
-use std::{fs::File, io::{self, Read, Seek}, ops::Deref, path::PathBuf};
+use std::{fs::File, io::{self, Read, Seek}, ops::Deref, path::PathBuf, process::Output};
 
 use bytes::{Buf, Bytes, BytesMut};
 use concurrent_slotmap::SlotMap;
@@ -105,18 +105,15 @@ impl<'a> PartitionRef<'a> {
     /// This removes all keys from this partition that are shared by the entries dashmap
     /// After removing these keys, it returns a future to a pending file deletion.
     /// This will delete keys immedietly without being polled and on poll will delete the file.
-    pub async fn purge<RT: SendRuntime>(&self, entries: &HashMap<SizedBytes, CacheEntry, RapidHash>) -> Result<()> {
-        let fut = {
-            let guard = self.partitions.pin();
-            let partition = self.partitions.get(self.key, &guard).ok_or(Error::PARTITION_NOT_FOUND)?;
-            
-            let guard = entries.guard();
-            while let Some(key) = partition.keys.pop() {
-                entries.remove(&key, &guard);
-            }; 
-            partition.file.delete::<RT>()
-        };
-        fut.await
+    pub fn purge<RT: SendRuntime>(&self, entries: &HashMap<SizedBytes, CacheEntry, RapidHash>) -> impl Future<Output = Result<()>> + use<RT> {
+        let guard = self.partitions.pin();
+        let partition = self.partitions.get(self.key, &guard).expect("Partition should not be removed!"); // todo: Return err?
+        
+        let guard = entries.guard();
+        while let Some(key) = partition.keys.pop() {
+            entries.remove(&key, &guard);
+        }; 
+        partition.file.delete::<RT>()
     }
 
     async fn append_from<RT: SendRuntime, B: Buf + Send + Sync + 'static>(&self, buf: B) -> Result<u64> {

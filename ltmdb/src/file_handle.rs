@@ -1,3 +1,13 @@
+//! All methods in this module return a future directly rather than being async functions.
+//! This is because we dont want to hold a borrow of the file handle across await points,
+//! and async functions do not currently allow returning futures that dont hold lifetimes
+//! of parameters.
+//! 
+//! Most (if not all) methods of concurrent object storage (as used for partitions) requires
+//! some form of locks, whether it be directly (RwLocks/Mutexes) or through pinning garbage
+//! collection. Holding these across awaits would either block writes (RwLock) or pause
+//! garbage collection for extended periods of time.
+
 use std::{fs::{self, File, OpenOptions}, io::{self, ErrorKind}, path::PathBuf, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 
 use bytes::{Buf, BytesMut};
@@ -79,24 +89,16 @@ fn write_all_buf_at<B: Buf>(
     mut offset: u64,
     mut buf: B,
 ) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        while buf.has_remaining() {
-            let written = writev_at(file, offset, &buf)?;
-            buf.advance(written);
-            offset += written as u64;
-        }
-    }
 
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::FileExt;
+    while buf.has_remaining() {
+        #[cfg(unix)]
+        let written = writev_at(file, offset, &buf)?;
         
-        while buf.has_remaining() {
-            let written = file.seek_write(&buf.chunk(), offset)?;
-            buf.advance(written);
-            offset += written as u64;
-        }
+        #[cfg(windows)]
+        let written = std::os::windows::fs::FileExt::seek_write(file, &buf.chunk(), offset)?;
+        
+        buf.advance(written);
+        offset += written as u64;
     }
     
     Ok(())
@@ -119,6 +121,8 @@ fn read_exact(file: &File, mut offset: u64, mut buf: &mut [u8]) -> io::Result<()
 
 #[cfg(unix)]
 fn writev_at<B: Buf>(file: &File, offset: u64, buf: &B) -> io::Result<usize> {
+    use std::io::IoSlice;
+
     use nix::sys::uio::pwritev;
     
     let mut iovecs = [IoSlice::new(&[]); 64];
