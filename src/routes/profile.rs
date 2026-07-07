@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::{cache::{cache_key::CacheKey, cache_router::CacheRouter, compression::{compress_data, extract_data}, memory::CacheEntry}, error::ProcessError, logging::{LogMessage, log}, request_utils::{env_var, json_response, request}};
 
 /// Database time to live for profile queries in seconds.
-pub static PROFILE_DB_TTL_SECONDS: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs(env_var("PROFILE_DB_TTL_SECONDS", 3600)));
+pub static PROFILE_DB_TTL_SECONDS: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs(env_var("PROFILE_DB_TTL_SECONDS", 120)));
 /// Cache time to live for profile queries in seconds.
 pub static PROFILE_CACHE_TTL_SECONDS: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs(env_var("PROFILE_CACHE_TTL_SECONDS", 120)));
 

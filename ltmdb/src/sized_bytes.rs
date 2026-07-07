@@ -2,7 +2,7 @@ use std::{hash, ops::Deref};
 
 use bytes::{Buf, Bytes};
 
-const MAX_INLINE_WORD_LENGTH: usize = size_of::<Bytes>() - size_of::<usize>() - size_of::<u8>() - size_of::<u8>();
+const MAX_INLINE_WORD_LENGTH: usize = size_of::<Bytes>() - size_of::<usize>() /* enum discriminant */ - size_of::<u8>() - size_of::<u8>();
 
 /// cheaply-clonable wrapper around bytes.
 /// 

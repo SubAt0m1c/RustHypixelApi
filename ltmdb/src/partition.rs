@@ -1,11 +1,12 @@
-use std::{fs::File, io::{self, Read, Seek}, ops::Deref, path::PathBuf, process::Output};
+use std::{fs::File, io::{self, Read, Seek}, ops::Deref, path::PathBuf};
 
 use bytes::{Buf, Bytes, BytesMut};
 use concurrent_slotmap::SlotMap;
 use crossbeam_queue::SegQueue;
+use futures_util::future::{Either, ready};
 use papaya::HashMap;
 
-use crate::{Error, ErrorKind, RapidHash, Result, db::{CacheEntry, ParKey}, file_handle::FileHandle, runtime::SendRuntime, sized_bytes::SizedBytes};
+use crate::{Error, RapidHash, Result, db::{CacheEntry, ParKey}, file_handle::FileHandle, runtime::SendRuntime, sized_bytes::SizedBytes};
 
 const KEY_LEN_SIZE: usize = size_of::<u64>();
 const VALUE_LEN_SIZE: usize = size_of::<u64>();
@@ -107,19 +108,22 @@ impl<'a> PartitionRef<'a> {
     /// This will delete keys immedietly without being polled and on poll will delete the file.
     pub fn purge<RT: SendRuntime>(&self, entries: &HashMap<SizedBytes, CacheEntry, RapidHash>) -> impl Future<Output = Result<()>> + use<RT> {
         let guard = self.partitions.pin();
-        let partition = self.partitions.get(self.key, &guard).expect("Partition should not be removed!"); // todo: Return err?
+        let Some(partition) = self.partitions.get(self.key, &guard) else {
+            return Either::Left(ready(Err(Error::PARTITION_NOT_FOUND))) // futures either here so i can return an error on the future itself.
+        };
         
         let guard = entries.guard();
         while let Some(key) = partition.keys.pop() {
             entries.remove(&key, &guard);
         }; 
-        partition.file.delete::<RT>()
+        
+        Either::Right(partition.file.delete::<RT>())
     }
 
     async fn append_from<RT: SendRuntime, B: Buf + Send + Sync + 'static>(&self, buf: B) -> Result<u64> {
         let fut = {
             let guard = self.partitions.pin();
-            let partition = self.partitions.get(self.key, &guard).ok_or(Error::simple(ErrorKind::PartitionError, "Partition not found."))?;
+            let partition = self.partitions.get(self.key, &guard).ok_or(Error::PARTITION_NOT_FOUND)?;
             partition.file.append_from::<RT, _>(buf)
         };
         fut.await

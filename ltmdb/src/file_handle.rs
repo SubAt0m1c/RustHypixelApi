@@ -3,8 +3,8 @@
 //! and async functions do not currently allow returning futures that dont hold lifetimes
 //! of parameters.
 //! 
-//! Most (if not all) methods of concurrent object storage (as used for partitions) requires
-//! some form of locks, whether it be directly (RwLocks/Mutexes) or through pinning garbage
+//! Most (if not all) methods of concurrent object storage (as used for partitions) require
+//! some form of lock, whether it be directly (RwLocks/Mutexes) or through pinning garbage
 //! collection. Holding these across awaits would either block writes (RwLock) or pause
 //! garbage collection for extended periods of time.
 
