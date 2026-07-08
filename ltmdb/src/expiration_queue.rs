@@ -41,14 +41,14 @@ pub(crate) async fn run_expiration_task<RT: SendRuntime>(cache_inner: Arc<DbInne
             match rx.try_recv() {
                 Ok(msg) => handle_message(msg, &mut heap),
                 Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => panic!("All handles to the expiration task should not be dropped!")
+                Err(TryRecvError::Disconnected) => unreachable!("Cache inner should hold a tx"),
             }
         }
 
         if heap.is_empty() {
             match rx.recv_async().await {
                 Ok(msg) => handle_message(msg, &mut heap),
-                Err(_) => panic!("All handles to the expiration task should not be dropped!"),
+                Err(_) => unreachable!("Cache inner should hold a tx"),
             }
             continue;
         }
@@ -87,9 +87,9 @@ pub(crate) async fn run_expiration_task<RT: SendRuntime>(cache_inner: Arc<DbInne
                 if delay > MAX_BACKOFF { continue }; // we just give up here. it likely wont succeed any future tries. (stale keys have already been removed)
 
                 heap.push(QueueEntry { time: now + delay, retries, ..entry }); // now shouldn't be too stale to use here
-            } // we just need to poll all the futures, they already run the code they need to internally.
+            }
 
-            res = rx.recv_async().fuse() => handle_message(res.expect("All handles to the expiration task should not be dropped!"), &mut heap),
+            res = rx.recv_async().fuse() => handle_message(res.expect("Cache inner should hold a tx"), &mut heap),
                 
             _ = sleep.fuse() => continue, // we loop back, which will shortly purge the woken entry.
         };

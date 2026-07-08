@@ -8,18 +8,17 @@ edition = "2024"
 members = ["ltmdb"]
 
 [dependencies]
-actix-web = { version = "4.13.0" }
+actix-web = { version = "4.14.0" }
 moka = { version = "0.12.15", features = ["future"] }
-reqwest = { version = "0.12.28", features = ["json"] }
-serde_json = "1.0.140"
-actix-governor = "0.8.0"
+reqwest = { version = "0.13.4", features = ["json"] }
+serde_json = "1.0.150"
+actix-governor = "0.10.0"
 lz4_flex = { version = "0.13.1", default-features = false } # disable default for unsafe thingys. makes it like slightly faster.
-uuid = { version = "1.23.3", features = ["v4", "serde"] }
+uuid = { version = "1.23.4", features = ["v4", "serde"] }
 futures = "0.3.32"
 simd-json = "0.17.0"
-mimalloc = "0.1.32"
+mimalloc = "0.1.52"
 serde = "1.0.228"
-heed = "0.22.1"
 tokio =  { version = "1.52.3", features = ["macros", "sync"] }
 ltmdb = { path = "ltmdb" }
 
