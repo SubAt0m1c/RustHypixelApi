@@ -1,6 +1,8 @@
 
 use std::{error::Error as StdError, fmt::Display, io, result::Result as StdResult};
 
+use futures_util::TryFutureExt;
+
 #[derive(Debug)]
 pub struct Error {
     kind: ErrorKind,
@@ -72,7 +74,7 @@ impl Display for Error {
 impl From<io::Error> for Error {
     #[inline]
     fn from(value: io::Error) -> Self {
-        Self::new(ErrorKind::IoError, value)
+        Self::io(value)
     }
 }
 
@@ -82,9 +84,7 @@ pub trait ResultExt {
     fn task_err<R, E: StdError + Send + Sync + 'static>(self) -> impl Future<Output = StdResult<R, Error>>
     where Self: Future<Output = StdResult<R, E>> + Sized
     {
-        async move {
-            self.await.map_err(|e| Error::new(ErrorKind::TaskError, e))
-        }
+        self.map_err(|e| Error::new(ErrorKind::TaskError, e))
     }
 
     /// flattens a future returning a `Result<Result<_, E: Into<Error>>, Error>` to a future returning `Result<_, Error>`

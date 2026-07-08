@@ -1,9 +1,11 @@
+use std::{env, fmt::{Debug, Display}, str::FromStr};
+
 use actix_governor::{Governor, GovernorConfigBuilder};
 use actix_web::{App, HttpServer, middleware::from_fn, web::Data};
 use mimalloc::MiMalloc;
 use tokio::sync::OnceCell;
 
-use crate::{cache::cache_router::CacheRouter, key_extractor::RealKeyExtractor, request_utils::env_var, routes::{profile::profile, secrets::secrets}};
+use crate::{cache::cache_router::CacheRouter, key_extractor::RealKeyExtractor, routes::{profile::profile, secrets::secrets}};
 
 mod cache;
 mod key_extractor;
@@ -47,4 +49,18 @@ async fn main() -> std::io::Result<()> {
     .bind((ip_addr, 8000))?
     .run()
     .await
+}
+
+pub fn env_var<T>(key: &'static str, default: T) -> T
+where
+    T: FromStr + Display,
+    T::Err: Debug
+{
+    match env::var(key) {
+        Ok(str) => str.parse::<T>().expect(&format!("{} should be a {}!", key, std::any::type_name::<T>())),
+        Err(e) => {
+            eprintln!("{e}: {}, using {} default.", key, default);
+            default
+        }
+    }
 }

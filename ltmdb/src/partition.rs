@@ -6,7 +6,7 @@ use crossbeam_queue::SegQueue;
 use futures_util::future::{Either, ready};
 use papaya::HashMap;
 
-use crate::{Error, RapidHash, Result, db::{CacheEntry, ParKey}, file_handle::FileHandle, runtime::SendRuntime, sized_bytes::SizedBytes};
+use crate::{Error, Result, db::{CacheEntry, ParKey}, file_handle::FileHandle, hasher::RapidHash, runtime::SendRuntime, sized_bytes::SizedBytes};
 
 const KEY_LEN_SIZE: usize = size_of::<u64>();
 const VALUE_LEN_SIZE: usize = size_of::<u64>();
@@ -202,7 +202,7 @@ impl Partition {
 
 fn fill<R: Read>(reader: &mut R, buf: &mut BytesMut) -> io::Result<usize> {
     /// This is how much space we check the buffer has before attempting to reclaim.
-    /// This could be able be optimized out, only reclaiming when we dont have the
+    /// This may be able to be optimized out, only reclaiming when we dont have the
     /// space to store the next entrys metadata exactly, but since this is only on
     /// db load, im not too worried about possible extra syscalls.
     const RECLAIM_SIZE: usize = 512 * 1024; // 512kb

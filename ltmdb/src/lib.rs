@@ -21,8 +21,7 @@ mod db;
 mod sized_bytes;
 mod runtime;
 
-pub use hasher::{RapidHash, rapidhash_nano};
-pub use error::{ Error, ErrorKind, ResultExt };
+pub use error::{Error, ErrorKind, ResultExt};
 pub use db::Database;
 pub use runtime::Runtime;
 pub use sized_bytes::SizedBytes;

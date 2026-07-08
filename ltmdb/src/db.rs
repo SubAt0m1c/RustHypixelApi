@@ -6,7 +6,7 @@ use flume::Sender;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use papaya::{HashMap, LocalGuard};
 
-use crate::{RapidHash, Result, bucket::{ActivePartition, Bucket, BucketRef}, error::Error, expiration_queue::{ExpCMD, spawn_expiration_task}, partition::{Partition, PartitionEntry, PartitionMap}, runtime::{Runtime, SendRuntime}, sized_bytes::SizedBytes, unix_secs};
+use crate::{Result, bucket::{ActivePartition, Bucket, BucketRef}, error::Error, expiration_queue::{ExpCMD, run_expiration_task}, hasher::RapidHash, partition::{Partition, PartitionEntry, PartitionMap}, runtime::{Runtime, SendRuntime}, sized_bytes::SizedBytes, unix_secs};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ParKey(SlotId);
@@ -49,7 +49,7 @@ pub(crate) struct CacheEntry {
 
 /// Lifetime managed key-value store.
 /// Async down to file io (handled by input runtime)
-/// Deletions are batched by a windowed time (default 1 minute)
+/// Expirations are delegated to a background expiration task and batched by a 1 minute window
 #[derive(Clone)]
 pub struct Database<RT: Runtime + Send + Sync + 'static> {
     inner: Arc<DbInner<RT>>
@@ -143,7 +143,7 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
             if let Err(e) = res { return Err(e) }
         }
         
-        spawn_expiration_task::<RT>(inner.clone(), rx);
+        RT::spawn(run_expiration_task::<RT>(inner.clone(), rx));
         Ok(Self { inner })
     }
 
@@ -159,7 +159,7 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
             _phantom: PhantomData
         });
 
-        spawn_expiration_task::<RT>(inner.clone(), rx);
+        RT::spawn(run_expiration_task::<RT>(inner.clone(), rx));
         
         Self { inner }
     }

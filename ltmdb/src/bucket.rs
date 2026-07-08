@@ -6,7 +6,7 @@ use flume::Sender;
 use papaya::{HashMap, LocalGuard};
 use portable_atomic::AtomicU128;
 
-use crate::{RapidHash, Result, db::ParKey, error::Error, expiration_queue::ExpCMD, partition::{Partition, PartitionEntry, PartitionMap, PartitionRef}, runtime::SendRuntime, sized_bytes::SizedBytes, unix_secs};
+use crate::{Result, db::ParKey, error::Error, expiration_queue::ExpCMD, hasher::RapidHash, partition::{Partition, PartitionEntry, PartitionMap, PartitionRef}, runtime::SendRuntime, sized_bytes::SizedBytes, unix_secs};
 
 const BUCKET_WINDOW: Duration = Duration::from_mins(1);
 

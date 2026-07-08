@@ -6,7 +6,7 @@ use serde_json::to_vec;
 use simd_json::{BorrowedValue, derived::ValueObjectAccess, to_borrowed_value};
 use uuid::Uuid;
 
-use crate::{cache::{cache_key::CacheKey, cache_router::CacheRouter, memory::CacheEntry}, error::ProcessError, request_utils::{env_var, json_response, request}};
+use crate::{cache::{cache_key::CacheKey, cache_router::CacheRouter, memory::CacheEntry}, env_var, error::ProcessError, request_utils::{json_response, request}};
 
 /// Cache time to live for secret queries in seconds. Secret queries do not query the database.
 pub static SECRETS_TTL_SECONDS: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs(env_var("SECRETS_TTL_SECONDS", 120)));

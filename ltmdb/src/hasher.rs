@@ -123,7 +123,7 @@ const fn mix(a: u64, b: u64) -> u64 {
 
 impl Default for RapidHash {
     fn default() -> Self {
-        // Rust docs think hashdos is a real threat so this mitigates it without sacrificing performance after the first hash.
+        // May help against trivial attempts at hashdos attacks. RapidHash is not designed to be cryptographically secure.
         static DEFAULT_SEED: LazyLock<u64> = LazyLock::new(|| RandomState::new().build_hasher().finish()); // just piggyback of the default randomness.
         Self {
             state: *DEFAULT_SEED

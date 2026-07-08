@@ -3,10 +3,10 @@ use std::{sync::{Arc, LazyLock}, time::{Duration, Instant}};
 use actix_web::web::Bytes;
 use moka::{Expiry, future::Cache, notification::RemovalCause};
 
-use crate::{cache::UuidKey, error::ProcessError, logging::{LogMessage, log}, request_utils::env_var};
+use crate::{cache::UuidKey, env_var, error::ProcessError, logging::{LogMessage, log}};
 
 /// Maximum size for the cache in megabytes.
-static CACHE_SIZE: LazyLock<u64> = LazyLock::new(|| env_var("CACHE_SIZE", 384));
+static CACHE_SIZE_MB: LazyLock<u64> = LazyLock::new(|| env_var("CACHE_SIZE_MB", 384));
 
 #[derive(Clone)]
 pub struct CacheEntry {
@@ -40,7 +40,7 @@ impl MemoryCache {
     pub fn new() -> Self {
         let cache = Cache::builder()
             .weigher(|_, v: &CacheEntry| v.len().try_into().unwrap_or(u32::MAX))
-            .max_capacity(*CACHE_SIZE * 1024 * 1024)
+            .max_capacity(*CACHE_SIZE_MB * 1024 * 1024)
             .expire_after(Expire)
             .eviction_listener(|key, _, cause| {
                 if matches!(cause, RemovalCause::Size) {

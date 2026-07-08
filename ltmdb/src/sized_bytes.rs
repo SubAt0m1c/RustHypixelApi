@@ -79,10 +79,12 @@ impl Buf for SizedBytes {
     fn remaining(&self) -> usize {
         self.len()
     }
+    
     #[inline]
     fn chunk(&self) -> &[u8] {
         self.as_slice()
     }
+    
     #[inline]
     fn advance(&mut self, cnt: usize) {
         match &mut self.inner {
@@ -93,6 +95,7 @@ impl Buf for SizedBytes {
             Inner::Bytes(b) => b.advance(cnt),
         }
     }
+    
     #[inline]
     fn copy_to_bytes(&mut self, len: usize) -> Bytes {
         match &mut self.inner {
@@ -124,7 +127,7 @@ impl<const N: usize> From<[u8; N]> for SizedBytes {
         if const { N <= MAX_INLINE_WORD_LENGTH } {
             let mut bytes = [0u8; MAX_INLINE_WORD_LENGTH];
             bytes[..N].copy_from_slice(&value);
-            return SizedBytes { inner: Inner::Inline { bytes, len: value.len() as u8, cursor: 0 } }
+            return SizedBytes { inner: Inner::Inline { bytes, len: N as u8, cursor: 0 } }
         }
         SizedBytes { inner: Inner::Bytes(Bytes::copy_from_slice(&value)) }
     }
