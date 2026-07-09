@@ -27,7 +27,7 @@ impl Hash for UuidKey {
 
 impl PartialOrd for UuidKey {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.key.partial_cmp(&other.key)
+        Some(self.cmp(other))
     }
 }
 
@@ -51,15 +51,13 @@ impl UuidKey {
     /// this loses the data of the variant, but variants are basically
     /// never different in the big 26.
     pub fn encode(id: Uuid, flag: u8) -> Self {
-        let f = flag as u128;
+        let f = u128::from(flag);
         let bit2 = ((f >> 2) & 1) << 79; // flags bit 79 (unused in version)
         let bit1 = ((f >> 1) & 1) << 63; // flags bit 63 (variant bit 1)
         let bit0 = (f & 1) << 62; // flags bit 62 (variant bit 2)
 
         let key = (id.as_u128() & !FLAG_MASK) | bit2 | bit1 | bit0;
-        Self {
-            key: key
-        }
+        Self { key }
     }
 
     pub fn as_u128(&self) -> u128 {
@@ -74,7 +72,7 @@ impl UuidKey {
         (bit2 << 2) | (bit1 << 1) | bit0
     }
 
-    /// Reconstructs a uuid from this UuidKey.
+    /// Reconstructs a uuid from this `UuidKey`.
     /// This assumes the default modern RFC 4122
     /// variant. If the uuid used to construct
     /// this used a different variant, it will NOT

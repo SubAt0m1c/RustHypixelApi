@@ -1,3 +1,4 @@
+#![allow(clippy::must_use_candidate)]
 
 use std::{error::Error as StdError, fmt::Display, io, result::Result as StdResult};
 
@@ -28,8 +29,8 @@ pub enum ErrorKind {
 impl Display for ErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Other(str) => write!(f, "{}", str),
-            _ => write!(f, "{:?}", self),
+            Self::Other(str) => write!(f, "{str}"),
+            _ => write!(f, "{self:?}"),
         }
     }
 }
@@ -38,7 +39,7 @@ impl Error {
     pub const BUCKET_NOT_FOUND: Self = Self { kind: ErrorKind::BucketError, error: ErrorContent::Simple("Bucket Not Found!") };
     pub const PARTITION_NOT_FOUND: Self = Self { kind: ErrorKind::PartitionError, error: ErrorContent::Simple("Partition Not Found!") };
     
-    pub fn new(kind: ErrorKind, err: impl StdError + Send + Sync + 'static) -> Self {
+    pub fn err(kind: ErrorKind, err: impl StdError + Send + Sync + 'static) -> Self {
         Self {
             kind, error: ErrorContent::Err(Box::new(err))
         }
@@ -51,11 +52,11 @@ impl Error {
     }
 
     pub fn io(err: io::Error) -> Self {
-        Self::new(ErrorKind::IoError, err)
+        Self::err(ErrorKind::IoError, err)
     }
 
     pub fn queue(err: impl StdError + Send + Sync + 'static) -> Self {
-        Self::new(ErrorKind::QueueError, err)
+        Self::err(ErrorKind::QueueError, err)
     }
 }
 
@@ -84,7 +85,7 @@ pub trait ResultExt {
     fn task_err<R, E: StdError + Send + Sync + 'static>(self) -> impl Future<Output = StdResult<R, Error>>
     where Self: Future<Output = StdResult<R, E>> + Sized
     {
-        self.map_err(|e| Error::new(ErrorKind::TaskError, e))
+        self.map_err(|e| Error::err(ErrorKind::TaskError, e))
     }
 
     /// flattens a future returning a `Result<Result<_, E: Into<Error>>, Error>` to a future returning `Result<_, Error>`

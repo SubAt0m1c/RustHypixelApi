@@ -34,6 +34,7 @@ impl Inner {
 }
 
 impl hash::Hash for SizedBytes {
+    #[inline]
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.as_slice().hash(state);
     }
@@ -48,7 +49,7 @@ impl Eq for SizedBytes {}
 
 impl PartialOrd for SizedBytes {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.as_slice().partial_cmp(other.as_slice())
+        Some(self.cmp(other))
     }
 }
 
@@ -90,7 +91,7 @@ impl Buf for SizedBytes {
         match &mut self.inner {
             Inner::Inline { len, cursor, .. } => {
                 assert!(cnt <= (*len - *cursor) as usize, "cnt {:?} must be less than remaining {:?}", cnt, *len - *cursor);
-                *cursor += cnt as u8
+                *cursor += cnt as u8;
             }
             Inner::Bytes(b) => b.advance(cnt),
         }

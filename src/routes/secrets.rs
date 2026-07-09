@@ -43,8 +43,7 @@ async fn secrets(
 
 /// Extracts the secret field from hypixel's achievement data. The data in the profile fields is per-profile and takes longer to update.
 fn find_secrets<'a>(data: &'a BorrowedValue<'a>) -> Option<&'a BorrowedValue<'a>> {
-    let res = data.get("player")
+    data.get("player")
         .and_then(|player| player.get("achievements"))
-        .and_then(|achievements| achievements.get("skyblock_treasure_hunter"));
-    res
+        .and_then(|achievements| achievements.get("skyblock_treasure_hunter"))
 }

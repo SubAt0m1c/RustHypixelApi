@@ -27,7 +27,7 @@ impl CacheKey for ProfileKey {
         log(LogMessage::TimeElapsed { elapsed: now.elapsed(), name: "DB Read" });
         
         if let Some(db_data) = bytes {
-            let decompressed = decompress(&db_data).map_err(|e| ProcessError::DatabaseError(e.to_string()))?;
+            let decompressed = decompress(&db_data).map_err(|e| ProcessError::Database(e.to_string()))?;
             
             log(LogMessage::MessageAndUser { key: uuid_key, message: "DB Hit" });
             return Ok(CacheEntry::from_vec(decompressed, *PROFILE_CACHE_TTL_SECONDS))

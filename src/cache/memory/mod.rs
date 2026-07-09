@@ -27,7 +27,7 @@ impl CacheEntry {
         self.data.len()
     }
 
-    pub fn to_bytes(self) -> Bytes {
+    pub fn into_bytes(self) -> Bytes {
         self.data
     }
 }
@@ -44,7 +44,7 @@ impl MemoryCache {
             .expire_after(Expire)
             .eviction_listener(|key, _, cause| {
                 if matches!(cause, RemovalCause::Size) {
-                    log(LogMessage::MessageAndUser { key: Arc::unwrap_or_clone(key), message: "Entry removed due to size constraints." })
+                    log(LogMessage::MessageAndUser { key: Arc::unwrap_or_clone(key), message: "Entry removed due to size constraints." });
                 }
             })
             .build();

@@ -24,7 +24,7 @@ impl ParKey {
     }
 
     #[inline]
-    pub fn data(&self) -> (u32, u32) {
+    pub fn data(self) -> (u32, u32) {
         (self.0.index(), self.0.generation())
     }
 }
@@ -55,9 +55,9 @@ pub struct Database<RT: Runtime + Send + Sync + 'static> {
     inner: Arc<DbInner<RT>>
 }
 
-pub(super) struct DbInner<RT: SendRuntime> {
-    pub(super) partitions: PartitionMap,
-    pub(super) entries: HashMap<SizedBytes, CacheEntry, RapidHash>,
+pub(crate) struct DbInner<RT: SendRuntime> {
+    partitions: PartitionMap,
+    entries: HashMap<SizedBytes, CacheEntry, RapidHash>,
     buckets: HashMap<u64, Bucket, RapidHash>,
     exp_tx: Sender<ExpCMD>,
     path: PathBuf,
@@ -79,6 +79,9 @@ impl<RT: SendRuntime> DbInner<RT> {
 
 impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
     /// Loads a database from a directory.
+    /// 
+    /// # Errors
+    /// Returns an error if any io operations failed or a spawned task returns an error.
     pub async fn load(path: &'static str) -> Result<Self> {
         let (exp_tx, rx) = flume::unbounded::<ExpCMD>();
 
@@ -140,31 +143,33 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
         }
 
         while let Some(res) = bucket_futures.next().await {
-            if let Err(e) = res { return Err(e) }
+            res?;
         }
         
-        RT::spawn(run_expiration_task::<RT>(inner.clone(), rx));
+        RT::spawn(run_expiration_task::<RT>(DbView::new(&inner), rx));
         Ok(Self { inner })
     }
 
     /// Creates a new database without care for previous target directory contents.
     pub fn create_new(path: impl Into<PathBuf>) -> Self {
         let (exp_tx, rx) = flume::unbounded::<ExpCMD>();
-        let inner = Arc::new(DbInner {
-            buckets: HashMap::with_hasher(RapidHash::default()),
-            entries: HashMap::with_hasher(RapidHash::default()),
-            partitions: PartitionMap::new(180),
-            exp_tx,
-            path: path.into(),
-            _phantom: PhantomData
-        });
+        let inner = Arc::new(DbInner::new(exp_tx, path));
 
-        RT::spawn(run_expiration_task::<RT>(inner.clone(), rx));
-        
+        RT::spawn(run_expiration_task::<RT>(DbView::new(&inner), rx));
         Self { inner }
     }
 
-    /// inserts an item into the database with a given ttl.
+    /// inserts a key value pair into the database with a given ttl.
+    /// 
+    /// inserting an entry that already exists will have the following behavior.
+    /// * old reference will be removed. Only the new value can be accessed.
+    /// * new value will not be accessable after the first entry's ttl has expired.
+    /// * neither entry's written data will be removed until their proper ttl.
+    /// 
+    /// this behavior will persist on db load.
+    /// 
+    /// # Errors
+    /// Returns an error if any io operations failed or a spawned task returns an error.
     pub async fn insert(&self, key: impl Into<SizedBytes>, value: impl Into<Bytes>, ttl: Duration) -> Result<()> {
         let now = unix_secs();
         let value = value.into();
@@ -179,14 +184,17 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
         Ok(())
     }
 
-    /// Attempts to get an entry from the database.
+    /// Attempts to get a value from the database given a key.
     /// Returns Ok(None) if the entry isn't in the database.
+    /// 
+    /// # Errors
+    /// Returns an error if any io operations failed or a spawned task returns an error.
     pub async fn read(&self, key: impl Into<SizedBytes>) -> Result<Option<Bytes>> {
-        let Some(CacheEntry { partition_key, position }) = self.inner.entries.pin().get(&key.into()).map(|e|  *e) else {
+        let Some(CacheEntry { partition_key, position }) = self.inner.entries.pin().get(&key.into()).copied() else {
             return Ok(None)
         };
 
-        self.inner.partitions.get_ref(partition_key).read::<RT>(position).await.map(|b| Some(b))
+        self.inner.partitions.get_ref(partition_key).read::<RT>(position).await.map(Some)
     }
 
     async fn get_or_create_bucket(&self, id: u64, ttl: Duration, now: u64) -> Result<LocalGuard<'_>> {
@@ -204,5 +212,24 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
         let guard = self.inner.buckets.guard();
         self.inner.buckets.insert(id, bucket, &guard);
         Ok(guard)
+    }
+}
+
+/// View into the database. 
+/// Used so the expiration task doesnt get full access to the database
+/// when it only needs to purge partitions.
+pub(crate) struct DbView<RT: SendRuntime> {
+    inner: Arc<DbInner<RT>>
+}
+
+impl<RT: SendRuntime> DbView<RT> {
+    pub(crate) fn new(inner: &Arc<DbInner<RT>>) -> Self {
+        Self {
+            inner: inner.clone()
+        }
+    }
+
+    pub(crate) fn purge_partition(&self, key: ParKey) -> impl Future<Output = Result<()>> + use<RT> {
+        self.inner.partitions.get_ref(key).purge::<RT>(&self.inner.entries)
     }
 }

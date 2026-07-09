@@ -1,6 +1,8 @@
 //! reimplementation of rapidhash nano from [GitHub](https://github.com/Nicoshev/rapidhash/blob/master/rapidhash.h#L432) under MIT license.
 //! (Nano because hashing more than 48 bytes is hardly expected)
 
+#![allow(clippy::inline_always, clippy::unreadable_literal)]
+
 use std::{hash::{BuildHasher, Hasher, RandomState}, hint::cold_path, sync::LazyLock};
 
 // constants used by the original hasher, corresponding to the secrets at the named index.
@@ -36,6 +38,7 @@ impl Hasher for RapidHash {
 }
 
 #[inline(always)]
+#[allow(clippy::similar_names)]
 pub const fn rapidhash_nano(mut seed: u64, bytes: &[u8]) -> u64 {
     seed ^= mix(seed ^ RH2, RH1);
     
@@ -84,7 +87,7 @@ pub const fn rapidhash_nano(mut seed: u64, bytes: &[u8]) -> u64 {
 
         a = read_u64(bytes, bytes.len() - 16) ^ slice.len() as u64;
         b = read_u64(bytes, bytes.len() - 8);
-        remaining = slice.len()
+        remaining = slice.len();
     }
 
     finish(a, b, seed, remaining)

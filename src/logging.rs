@@ -49,9 +49,7 @@ impl Display for LogMessage {
 static SENDER: OnceCell<UnboundedSender<(UtcDateTime, LogMessage)>> = OnceCell::const_new();
 
 pub fn log(msg: LogMessage) {
-    if let Some(tx) = SENDER.get() {
-        let _ = tx.send((UtcDateTime::now(), msg));
-    }
+    let _ = SENDER.get().expect("Logger should be initialized").send((UtcDateTime::now(), msg));
 }
 
 pub fn init() {
@@ -59,7 +57,7 @@ pub fn init() {
     SENDER.set(tx).unwrap();
     thread::spawn(move || {
         while let Some((time, msg)) = rx.blocking_recv() {
-            println!("{}: {}", time, msg)
+            println!("{time}: {msg}");
         }
     });
 }

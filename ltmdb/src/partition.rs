@@ -21,7 +21,7 @@ impl PartitionMap {
     }
     
     pub fn get_ref(&self, key: ParKey) -> PartitionRef<'_> {
-        PartitionRef::new(key, &self)
+        PartitionRef::new(key, self)
     }
 }
 
@@ -100,7 +100,7 @@ impl<'a> PartitionRef<'a> {
             let partition = self.partitions.get(self.key, &guard).ok_or(Error::PARTITION_NOT_FOUND)?;
             partition.file.read_to::<RT>(position.position, BytesMut::zeroed(position.value_len))
         };
-        fut.await.map(|b| b.freeze())
+        fut.await.map(BytesMut::freeze)
     }
     
     /// This removes all keys from this partition that are shared by the entries dashmap
@@ -130,6 +130,7 @@ impl<'a> PartitionRef<'a> {
     }
 
     fn insert_key(&self, key: SizedBytes) {
+        
         self.partitions.get(self.key, &self.partitions.pin()).inspect(|b| b.keys.push(key));
     }
 }
@@ -146,6 +147,11 @@ impl Partition {
             keys: SegQueue::new(),
         };
         Ok(inner)
+    }
+
+    pub fn new_sync(path: PathBuf) -> Result<Self> {
+        let file = FileHandle::new_sync(path)?;
+        Ok(Partition { file, keys: SegQueue::new() })
     }
 
     /// creates a partition file by reading an existing file. Returns a vec of key/entry pairs it contains.
@@ -188,7 +194,7 @@ impl Partition {
             }
             
             entries.push((key, PartitionEntry { position: position as u64, value_len}));
-            position += value_len
+            position += value_len;
         }
 
         let inner = Self {
@@ -213,7 +219,7 @@ fn fill<R: Read>(reader: &mut R, buf: &mut BytesMut) -> io::Result<usize> {
     // SAFETY: We don't read from this and we only set its length for as much as was read.
     let dst = unsafe {
         std::slice::from_raw_parts_mut(
-            spare.as_mut_ptr() as *mut u8,
+            spare.as_mut_ptr().cast::<u8>(),
             spare.len(),
         )
     };

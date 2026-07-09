@@ -5,7 +5,7 @@
 //! 
 //! Most (if not all) methods of concurrent object storage (as used for partitions) require
 //! some form of lock, whether it be directly (RwLocks/Mutexes) or through pinning garbage
-//! collection. Holding these across awaits would either block writes (RwLock) or pause
+//! collection. Holding these across awaits would either block writes (`RwLock`) or pause
 //! garbage collection for extended periods of time.
 
 use std::{fs::{self, File, OpenOptions}, io::{self, ErrorKind}, path::PathBuf, sync::{Arc, atomic::{AtomicU64, Ordering}}};
@@ -31,6 +31,7 @@ impl FileHandle {
                 .read(true)
                 .write(true)
                 .create(true)
+                .truncate(false)
                 .open(inner_path)?;
             let end = file.metadata()?.len();
             Ok::<_, Error>((file, end))
@@ -46,6 +47,7 @@ impl FileHandle {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&path)?;
         let offset = AtomicU64::new(file.metadata()?.len());
         
@@ -112,7 +114,7 @@ fn read_exact(file: &File, mut offset: u64, mut buf: &mut [u8]) -> io::Result<()
                 buf = &mut buf[n..];
                 offset += n as u64;
             }
-            Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
+            Err(ref e) if e.kind() == ErrorKind::Interrupted => {},
             Err(e) => return Err(e),
         }
     }

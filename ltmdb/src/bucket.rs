@@ -87,7 +87,7 @@ impl ActivePartition {
     #[inline]
     fn pack(key: ParKey, insertion_time: u64) -> u128 {
         let (index, generation) = key.data();
-        (index as u128) << 96 | (generation as u128) << 64 | (insertion_time as u128)
+        (u128::from(index)) << 96 | (u128::from(generation)) << 64 | (u128::from(insertion_time))
     }
 }
 
@@ -110,9 +110,11 @@ impl Bucket {
     
     pub async fn new<RT: SendRuntime>(path: PathBuf, now: u64, ttl: Duration, partition_map: &SlotMap<ParKey, Partition>, exp_tx: &Sender<ExpCMD>) -> Result<Self> {
         let create_path = path.clone();
-        RT::spawn_blocking(move || fs::create_dir_all(create_path)).await??;
-        let part_path = path.join(format!("{}", now));
-        let new_partition = Partition::new::<RT>(part_path).await?;
+        let new_partition = RT::spawn_blocking(move || {
+            fs::create_dir_all(&create_path)?;
+            let part_path = create_path.join(format!("{now}"));
+            Partition::new_sync(part_path)
+        }).await??;
         let par_key = partition_map.insert(new_partition, &partition_map.pin());
         exp_tx.send(ExpCMD::Schedule { time: now + ttl.as_secs(), par_key }).map_err(Error::queue)?;
         

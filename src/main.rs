@@ -27,7 +27,7 @@ async fn main() -> std::io::Result<()> {
     let api_key = std::env::var("API_KEY").expect("no api key env variable found");
     API_KEY.set(api_key).expect("API_KEY should be available to set!");
     let ip_addr: String = std::env::var("IP_ADDR").unwrap_or("127.0.0.1".to_string());
-    println!("Listening on {}:8000!", ip_addr);
+    println!("Listening on {ip_addr}:8000!");
 
     let rate_limit = GovernorConfigBuilder::default()
         .key_extractor(RealKeyExtractor)
@@ -51,15 +51,17 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 
+/// # Panics
+/// panics if the environment variable is not parsable as `T`.
 pub fn env_var<T>(key: &'static str, default: T) -> T
 where
     T: FromStr + Display,
     T::Err: Debug
 {
     match env::var(key) {
-        Ok(str) => str.parse::<T>().expect(&format!("{} should be a {}!", key, std::any::type_name::<T>())),
+        Ok(str) => str.parse::<T>().unwrap_or_else(|e| panic!("{} should be a {}!: {e:?}", key, std::any::type_name::<T>())),
         Err(e) => {
-            eprintln!("{e}: {}, using {} default.", key, default);
+            eprintln!("{e}: {key}, using {default} default.");
             default
         }
     }
