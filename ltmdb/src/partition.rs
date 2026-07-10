@@ -66,10 +66,10 @@ impl<'a> PartitionRef<'a> {
             // Chaining here avoids the allocation/move of a large key and/or value required to put them in one buffer, but this only helps when we have pwritev support.
             buf = Buf::chain(key_len_buf, entry_key.clone())
                 .chain(value_len_buf)
-                .chain(entry_value);  
+                .chain(entry_value);
         }
         
-        #[cfg(windows)]
+        #[cfg(not(unix))]
         {
             use bytes::BufMut;
 

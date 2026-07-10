@@ -13,6 +13,8 @@
 
 use std::{result::Result as StdResult, time::{Duration, SystemTime, UNIX_EPOCH}};
 
+mod io_uring;
+
 mod hasher;
 mod error;
 mod expiration_queue;
@@ -29,7 +31,6 @@ pub use runtime::Runtime;
 pub use sized_bytes::SizedBytes;
 
 pub(crate) type Result<T> = StdResult<T, error::Error>;
-
 #[inline]
 pub(crate) fn unix_secs() -> u64 {
    SystemTime::now()

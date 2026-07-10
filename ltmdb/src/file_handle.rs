@@ -97,7 +97,7 @@ fn write_all_buf_at<B: Buf>(
         let written = writev_at(file, offset, &buf)?;
         
         #[cfg(windows)]
-        let written = std::os::windows::fs::FileExt::seek_write(file, &buf.chunk(), offset)?;
+        let written = std::os::windows::fs::FileExt::seek_write(file, buf.chunk(), offset)?;
         
         buf.advance(written);
         offset += written as u64;

@@ -60,6 +60,12 @@ impl<'a> BucketRef<'a> {
     }
 }
 
+/// packs a partition key and its insertion time into a single atomic u128.
+/// the bits are laid out as
+/// ```text
+/// | u32 (high) | u32    | u64 (low) |
+/// | 127..96    | 95..64 | 63..0     |    
+/// ```
 #[derive(Debug)]
 pub(crate) struct ActivePartition {
     value: AtomicU128,
@@ -87,7 +93,7 @@ impl ActivePartition {
     #[inline]
     fn pack(key: ParKey, insertion_time: u64) -> u128 {
         let (index, generation) = key.data();
-        (u128::from(index)) << 96 | (u128::from(generation)) << 64 | (u128::from(insertion_time))
+        u128::from(index) << 96 | u128::from(generation) << 64 | u128::from(insertion_time)
     }
 }
 
