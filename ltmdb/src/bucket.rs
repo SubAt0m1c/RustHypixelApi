@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, sync::atomic::Ordering, time::Duration};
+use std::{fs, path::PathBuf, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Duration};
 
 use bytes::Bytes;
 use concurrent_slotmap::SlotMap;
@@ -35,26 +35,26 @@ impl<'a> BucketRef<'a> {
         Ok((partition.key(), partition_entry))
     }
 
-    async fn get_live_partition<'b, RT: SendRuntime>(&self, guard: LocalGuard<'_>, now: u64, partition_map: &'b PartitionMap, exp_tx: &Sender<ExpCMD>) -> Result<PartitionRef<'b>> {
-        let bucket = self.buckets.get(&self.key, &guard).ok_or(Error::BUCKET_NOT_FOUND)?;
+    async fn get_live_partition<'b, RT: SendRuntime>(&self, bucket_guard: LocalGuard<'_>, now: u64, partition_map: &'b PartitionMap, exp_tx: &Sender<ExpCMD>) -> Result<PartitionRef<'b>> {
+        let bucket = self.buckets.get(&self.key, &bucket_guard).ok_or(Error::BUCKET_NOT_FOUND)?;
         let (current_key, rotated_at) = bucket.live_partition.load();
 
-        if now < rotated_at + BUCKET_WINDOW.as_secs() {
+        if now < rotated_at + BUCKET_WINDOW.as_secs() || !bucket.acq_rotate() {
             return Ok(partition_map.get_ref(current_key))
         }
-
+        
+        // this will reset the guard if the function returns early or the future is dropped/cancelled.
+        let _drop_guard = reset_on_drop(bucket.rotation_guard.clone());
         let path = bucket.path.join(now.to_string());
-        drop(guard);
+        drop(bucket_guard);
 
         let new_partition = Partition::new::<RT>(path).await?;
         let new_key = partition_map.insert(new_partition, &partition_map.pin());
 
-        {
-            let guard = self.buckets.guard();
-            let bucket = self.buckets.get(&self.key, &guard).ok_or(Error::BUCKET_NOT_FOUND)?;
-            exp_tx.send(ExpCMD::Schedule { time: now + bucket.ttl.as_secs(), par_key: new_key }).map_err(Error::queue)?;
-            bucket.live_partition.store(new_key, now);
-        }
+        let bucket_guard = self.buckets.guard();
+        let bucket = self.buckets.get(&self.key, &bucket_guard).ok_or(Error::BUCKET_NOT_FOUND)?;
+        exp_tx.send(ExpCMD::Schedule { time: now + bucket.ttl.as_secs(), par_key: new_key }).map_err(Error::queue)?;
+        bucket.live_partition.store(new_key, now);
 
         Ok(partition_map.get_ref(new_key))
     }
@@ -100,6 +100,7 @@ impl ActivePartition {
 #[derive(Debug)]
 pub(crate) struct Bucket {
     live_partition: ActivePartition,
+    rotation_guard: Arc<AtomicBool>,
     ttl: Duration,
     path: PathBuf,
 }
@@ -108,7 +109,7 @@ impl Bucket {
     pub fn new_existing(partition: ActivePartition, ttl: Duration, path: PathBuf) -> Self {
         Self {
             live_partition: partition,
-            // live_window,
+            rotation_guard: Arc::new(AtomicBool::new(false)),
             ttl,
             path,
         }
@@ -126,8 +127,28 @@ impl Bucket {
         
         Ok(Self {
             live_partition: ActivePartition::new(par_key, now),
+            rotation_guard: Arc::new(AtomicBool::new(false)),
             ttl,
             path,
         })
+    }
+
+    /// Acquires the rotation guard, returning `true` if the guard was successfully acquired.
+    /// 
+    /// rotation guard must be set to `false` when the rotation is complete.
+    fn acq_rotate(&self) -> bool {
+        self.rotation_guard.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok()
+    }
+}
+
+fn reset_on_drop(guard: Arc<AtomicBool>) -> ResetOnDrop {
+    ResetOnDrop(guard)
+}
+
+struct ResetOnDrop(Arc<AtomicBool>);
+
+impl Drop for ResetOnDrop {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
     }
 }
