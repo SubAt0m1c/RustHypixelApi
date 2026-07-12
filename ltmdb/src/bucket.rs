@@ -39,12 +39,14 @@ impl<'a> BucketRef<'a> {
         let bucket = self.buckets.get(&self.key, &bucket_guard).ok_or(Error::BUCKET_NOT_FOUND)?;
         let (current_key, rotated_at) = bucket.live_partition.load();
 
+        // If the rotation lock cannot be acquired, we return the current partition.
+        // We don't need to immedietly worry about writing to an old partition, we actively promise that removals may be off in timing.
         if now < rotated_at + BUCKET_WINDOW.as_secs() || !bucket.acq_rotate() {
             return Ok(partition_map.get_ref(current_key))
         }
         
         // this will reset the guard if the function returns early or the future is dropped/cancelled.
-        let _drop_guard = reset_on_drop(bucket.rotation_guard.clone());
+        let _drop_guard = reset_on_drop(bucket.rotation_guard.clone()); // we need a cloned arc here so we dont hold the bucket guard while awaiting a new partition being made.
         let path = bucket.path.join(now.to_string());
         drop(bucket_guard);
 
