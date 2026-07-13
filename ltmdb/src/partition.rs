@@ -49,10 +49,6 @@ impl<'a> PartitionRef<'a> {
         Self { key, partitions }
     }
 
-    pub fn key(&self) -> ParKey {
-        self.key
-    }
-
     pub async fn insert<RT: SendRuntime>(&self, entry_key: SizedBytes, entry_value: Bytes) -> Result<PartitionEntry> {
         let key_len = entry_key.len() as u64;
         let value_len = entry_value.len() as u64;

@@ -4,9 +4,9 @@ use bytes::Bytes;
 use concurrent_slotmap::{Key, SlotId};
 use flume::Sender;
 use futures_util::{StreamExt, stream::FuturesUnordered};
-use papaya::{HashMap, LocalGuard};
+use papaya::HashMap;
 
-use crate::{Result, bucket::{ActivePartition, Bucket, BucketRef}, error::Error, expiration_queue::{ExpCMD, run_expiration_task}, hasher::RapidHash, partition::{Partition, PartitionEntry, PartitionMap}, runtime::{Runtime, SendRuntime}, sized_bytes::SizedBytes, unix_secs};
+use crate::{Result, bucket::{ActivePartition, Bucket}, error::Error, expiration_queue::{ExpCMD, run_expiration_task}, hasher::RapidHash, partition::{Partition, PartitionEntry, PartitionMap}, runtime::{Runtime, SendRuntime}, sized_bytes::SizedBytes, unix_secs};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ParKey(SlotId);
@@ -172,18 +172,37 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
     /// Returns an error if any io operations failed or a spawned task returns an error.
     pub async fn insert(&self, key: impl Into<SizedBytes>, value: impl Into<Bytes>, ttl: Duration) -> Result<()> {
         let now = unix_secs();
-        let value = value.into();
         let cache_id = ttl.as_secs();
 
-        let guard = self.get_or_create_bucket(cache_id, ttl, now).await?;
+        let mut guard = self.inner.buckets.guard();
 
-        let bucket_ref = BucketRef::new(cache_id, &self.inner.buckets);
-        let key = key.into();
-        let (partition_key, position) = bucket_ref.insert::<RT>(guard, key.clone(), value, &self.inner.partitions, &self.inner.exp_tx).await?;
-        let _ = self.inner.entries.pin().insert(key, CacheEntry { partition_key, position });
+        #[allow(clippy::single_match_else)] // clippy is silly and the alternative is a let bucket = if let Some()
+        let bucket = match self.inner.buckets.get(&cache_id, &guard) {
+            Some(bucket) => bucket,
+            None => {
+                drop(guard); // drop the guard for the upcoming .await
+                
+                let path = self.inner.path.join(ttl.as_millis().to_string());
+                let bucket = Bucket::new::<RT>(path, now, ttl, &self.inner.partitions, &self.inner.exp_tx).await?;
+                
+                guard = self.inner.buckets.guard();
+                self.inner.buckets.get_or_insert(cache_id, bucket, &guard)
+            }
+        };
+
+        let entry_key = key.into();
+        let insert_future = self.insert_into(bucket, cache_id, entry_key.clone(), value.into());
+        drop(guard); // drop the guard for the upcoming .await
+        
+        let (partition_key, position) = insert_future.await?;
+        let _ = self.inner.entries.pin().insert(entry_key, CacheEntry { partition_key, position });
         Ok(())
     }
 
+    fn insert_into<'a>(&'a self, bucket: &Bucket, bucket_id: u64, entry_key: SizedBytes, entry_value: Bytes) -> impl Future<Output = Result<(ParKey, PartitionEntry)>> + use<'a, RT> {
+        bucket.insert::<RT>(bucket_id, &self.inner.buckets, entry_key, entry_value, &self.inner.partitions, &self.inner.exp_tx)
+    }
+    
     /// Attempts to get a value from the database given a key.
     /// Returns Ok(None) if the entry isn't in the database.
     /// 
@@ -195,23 +214,6 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
         };
 
         self.inner.partitions.get_ref(partition_key).read::<RT>(position).await.map(Some)
-    }
-
-    async fn get_or_create_bucket(&self, id: u64, ttl: Duration, now: u64) -> Result<LocalGuard<'_>> {
-        let guard = self.inner.buckets.guard();
-        
-        if self.inner.buckets.contains_key(&id, &guard) {
-            return Ok(guard)
-        }
-
-        drop(guard);
-
-        let path = self.inner.path.join(ttl.as_millis().to_string());
-        let bucket = Bucket::new::<RT>(path, now, ttl, &self.inner.partitions, &self.inner.exp_tx).await?;
-        
-        let guard = self.inner.buckets.guard();
-        self.inner.buckets.insert(id, bucket, &guard);
-        Ok(guard)
     }
 }
 
