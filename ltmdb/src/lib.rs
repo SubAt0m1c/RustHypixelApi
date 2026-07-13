@@ -41,6 +41,7 @@ pub(crate) mod defer {
     use std::mem::ManuallyDrop;
 
     /// runs the given closure when the returned value is dropped.
+    #[must_use]
     pub fn defer<F: FnOnce()>(deferred: F) -> impl Deferred {
         struct Deferrable<F: FnOnce()>(ManuallyDrop<F>);
 

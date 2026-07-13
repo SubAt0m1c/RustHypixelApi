@@ -108,7 +108,7 @@ impl<'a> PartitionRef<'a> {
     /// This will delete keys immedietly without being polled and on poll will delete the file.
     pub fn purge<RT: SendRuntime>(&self, entries: &HashMap<SizedBytes, CacheEntry, RapidHash>) -> impl Future<Output = Result<()>> + use<RT> {
         let guard = self.partitions.pin();
-        let Some(partition) = self.partitions.get(self.key, &guard) else {
+        let Some(partition) = self.partitions.remove(self.key, &guard) else {
             return Either::Left(ready(Err(Error::PARTITION_NOT_FOUND))) // futures either here so i can return an error on the future itself.
         };
         
