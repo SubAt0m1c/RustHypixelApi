@@ -69,7 +69,7 @@ impl<RT: SendRuntime> DbInner<RT> {
         Self {
             buckets: HashMap::with_hasher(RapidHash::default()),
             entries: HashMap::with_hasher(RapidHash::default()),
-            partitions: PartitionMap::new(180),
+            partitions: PartitionMap::new(180), // if max_capacity is too low, it will panic with `capacity overflow` on insert. 
             exp_tx,
             path: path.into(),
             _phantom: PhantomData
@@ -206,7 +206,7 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
 
         drop(guard);
 
-        let path = self.inner.path.join(format!("{}", ttl.as_millis()));
+        let path = self.inner.path.join(ttl.as_millis().to_string());
         let bucket = Bucket::new::<RT>(path, now, ttl, &self.inner.partitions, &self.inner.exp_tx).await?;
         
         let guard = self.inner.buckets.guard();

@@ -36,3 +36,42 @@ pub(crate) fn unix_secs() -> u64 {
        .unwrap_or(Duration::ZERO)
        .as_secs()
 }
+
+pub(crate) mod defer {
+    use std::mem::ManuallyDrop;
+
+    /// runs the given closure when the returned value is dropped.
+    pub fn defer<F: FnOnce()>(deferred: F) -> impl Deferred {
+        struct Deferrable<F: FnOnce()>(ManuallyDrop<F>);
+
+        impl<F: FnOnce()> Sealed for Deferrable<F> {}
+        
+        impl<F: FnOnce()> Deferred for Deferrable<F> {
+            /// consumes the deferred closue without running it.
+            fn cancel(self) {
+                let mut guard = ManuallyDrop::new(self);
+    
+                // SAFETY: `guard` is wrapped in an outer [`ManuallyDrop`], so it's own
+                // destructor will never be run. This is the only place `f` is dropped.
+                unsafe { ManuallyDrop::drop(&mut guard.0) };
+            }
+        }
+        
+        impl<F: FnOnce()> Drop for Deferrable<F> {
+            fn drop(&mut self) {
+                // SAFETY: We don't use the internal [`ManuallyDrop`] after this.
+                let f = unsafe { ManuallyDrop::take(&mut self.0) };
+                f();
+            }
+        }
+        
+        Deferrable(ManuallyDrop::new(deferred))
+    }
+
+    #[allow(private_bounds)]
+    pub trait Deferred: Sealed {
+        fn cancel(self);
+    }
+    
+    trait Sealed {}
+}

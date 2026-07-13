@@ -130,7 +130,6 @@ impl<'a> PartitionRef<'a> {
     }
 
     fn insert_key(&self, key: SizedBytes) {
-        
         self.partitions.get(self.key, &self.partitions.pin()).inspect(|b| b.keys.push(key));
     }
 }
