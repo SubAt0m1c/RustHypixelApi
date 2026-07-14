@@ -1,4 +1,4 @@
-use std::{fs::File, io::{self, Read, Seek}, ops::Deref, path::PathBuf};
+use std::{io::{self, Read, Seek}, ops::Deref, path::PathBuf};
 
 use bytes::{Buf, Bytes, BytesMut};
 use concurrent_slotmap::SlotMap;
@@ -6,7 +6,7 @@ use crossbeam_queue::SegQueue;
 use futures_util::future::{Either, ready};
 use papaya::HashMap;
 
-use crate::{Error, Result, db::{CacheEntry, ParKey}, file_handle::FileHandle, hasher::RapidHash, runtime::SendRuntime, sized_bytes::SizedBytes};
+use crate::{Error, Result, db::{CacheEntry, ParKey}, file_handle::{FileHandle, open_file}, hasher::RapidHash, runtime::SendRuntime, sized_bytes::SizedBytes};
 
 const KEY_LEN_SIZE: usize = size_of::<u64>();
 const VALUE_LEN_SIZE: usize = size_of::<u64>();
@@ -91,16 +91,16 @@ impl<'a> PartitionRef<'a> {
 
     #[inline]
     pub async fn read<RT: SendRuntime>(&self, position: PartitionEntry) -> Result<Bytes> {
-        let fut = {
+        let read_fut = {
             let guard = self.partitions.pin();
             let partition = self.partitions.get(self.key, &guard).ok_or(Error::PARTITION_NOT_FOUND)?;
             partition.file.read_to::<RT>(position.position, BytesMut::zeroed(position.value_len))
         };
-        fut.await.map(BytesMut::freeze)
+        read_fut.await.map(BytesMut::freeze)
     }
 
     /// Removes this partition from the partition map, while removing all keys from this
-    /// partition that are shared by the entries dashmap. After removing these keys, it 
+    /// partition that are shared by the entries hashmap. After removing these keys, it 
     /// returns a future to a pending file deletion.
     /// This will delete itself and keys immedietly without being polled. When polled, it
     /// will proceed with deleting the corresponding file.
@@ -119,12 +119,12 @@ impl<'a> PartitionRef<'a> {
     }
 
     async fn append_from<RT: SendRuntime, B: Buf + Send + Sync + 'static>(&self, buf: B) -> Result<u64> {
-        let fut = {
+        let append_fut = {
             let guard = self.partitions.pin();
             let partition = self.partitions.get(self.key, &guard).ok_or(Error::PARTITION_NOT_FOUND)?;
             partition.file.append_from::<RT, _>(buf)
         };
-        fut.await
+        append_fut.await
     }
 
     fn insert_key(&self, key: SizedBytes) {
@@ -155,7 +155,7 @@ impl Partition {
     pub fn from_file(path: PathBuf) -> Result<(Vec<(SizedBytes, PartitionEntry)>, Self)> {
         const BUFFER_SIZE: usize = 8 * 1024 * 1024; // 8mb
         
-        let mut file = File::options().read(true).open(&path)?;
+        let mut file = open_file(&path)?;
         let mut buffer = BytesMut::with_capacity(BUFFER_SIZE);
         let mut entries: Vec<(SizedBytes, PartitionEntry)> = Vec::new();
         let keys: SegQueue<SizedBytes> = SegQueue::new();
@@ -195,7 +195,7 @@ impl Partition {
         }
 
         let inner = Self {
-            file: FileHandle::new_sync(path)?,
+            file: FileHandle::from_file(file, path)?,
             keys,
         };
         

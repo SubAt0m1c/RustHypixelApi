@@ -8,7 +8,7 @@
 //! collection. Holding these across awaits would either block writes (`RwLock`) or pause
 //! garbage collection for extended periods of time.
 
-use std::{fs::{self, File, OpenOptions}, io::{self, ErrorKind}, path::PathBuf, sync::{Arc, atomic::{AtomicU64, Ordering}}};
+use std::{fs::{self, File, OpenOptions}, io::{self, ErrorKind}, path::{Path, PathBuf}, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 
 use bytes::{Buf, BytesMut};
 use crate::{Result, ResultExt, error::Error, runtime::SendRuntime};
@@ -27,12 +27,7 @@ impl FileHandle {
     pub async fn new<RT: SendRuntime>(path: PathBuf) -> Result<Self> {
         let inner_path = path.clone();
         let (file, offset) = RT::spawn_blocking(move || {
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .open(inner_path)?;
+            let file = open_file(&inner_path)?;
             let end = file.metadata()?.len();
             Ok::<_, Error>((file, end))
         }).await??;
@@ -43,14 +38,16 @@ impl FileHandle {
     }
 
     pub fn new_sync(path: PathBuf) -> Result<Self> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)?;
+        let file = open_file(&path)?;
         let offset = AtomicU64::new(file.metadata()?.len());
         
+        Ok(Self {
+            inner: Arc::new(Inner { file, offset, path })
+        })
+    }
+
+    pub fn from_file(file: File, path: PathBuf) -> Result<Self> {
+        let offset = AtomicU64::new(file.metadata()?.len());
         Ok(Self {
             inner: Arc::new(Inner { file, offset, path })
         })
@@ -78,6 +75,16 @@ impl FileHandle {
         let inner = self.inner.clone();
         RT::spawn_blocking(move || fs::remove_file(&inner.path).map_err(Into::into)).flatten()
     }   
+}
+
+/// opens a `file` with the options needed for the `FileHandle`
+pub(crate) fn open_file<P: AsRef<Path>>(path: P) -> io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
 }
 
 /// Writes an entire buffer to a file at a specific offset.
