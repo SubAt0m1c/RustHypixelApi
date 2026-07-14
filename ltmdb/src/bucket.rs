@@ -41,13 +41,21 @@ impl Bucket {
     /// 
     /// requires `bucket_id` and `buckets` to be passed in so the future can reacquire the bucket
     /// when the future has internally finished awaiting.
-    pub fn insert<'a, RT: SendRuntime>(&self, bucket_id: u64, buckets: &'a HashMap<u64, Bucket, RapidHash>, entry_key: SizedBytes, entry_value: Bytes, partition_map: &'a PartitionMap, exp_tx: &'a Sender<ExpCMD>) -> impl Future<Output = Result<(ParKey, PartitionEntry)>> + use<'a, RT> {
-        let rotation_future = match self.needs_rotate::<RT>() {
-            Ok(path) => Either::Left(async move {
+    pub fn insert<'a, RT: SendRuntime>(
+        &self, 
+        bucket_id: u64,
+        buckets: &'a HashMap<u64, Bucket, RapidHash>, 
+        entry_key: SizedBytes, 
+        entry_value: Bytes, 
+        partition_map: &'a PartitionMap, 
+        exp_tx: &'a Sender<ExpCMD>
+    ) -> impl Future<Output = Result<(ParKey, PartitionEntry)>> + use<'a, RT> {
+        let now = unix_secs();
+        let rotation_future = match self.needs_rotate::<RT>(now) {
+            Ok(path) => Either::Left(async move { // this needs to be a future so the new partition creation can be awaited.
                 // ensures the guard will be released if the future is dropped or function returns early.
                 let drop_guard = defer(|| buckets.pin().get(&bucket_id).map_or((), Bucket::rel_rotate));
                 
-                let now = unix_secs();
                 let new_partition = Partition::new::<RT>(path).await?;
                 let new_key = partition_map.insert(new_partition, &partition_map.pin());
         
@@ -73,8 +81,7 @@ impl Bucket {
 
     /// Returns `Ok(pathbuf)` if the bucket needs to be rotated, `Err(ParKey)` otherwise.
     /// Acquires the rotation guard if a rotation is needed.
-    fn needs_rotate<RT: SendRuntime>(&self) -> std::result::Result<PathBuf, ParKey> {
-        let now = unix_secs();
+    fn needs_rotate<RT: SendRuntime>(&self, now: u64) -> std::result::Result<PathBuf, ParKey> {
         let (current_key, rotated_at) = self.live_partition.load(Ordering::Relaxed);
         if now < rotated_at + BUCKET_WINDOW.as_secs() || !self.acq_rotate() {
             return Err(current_key)
