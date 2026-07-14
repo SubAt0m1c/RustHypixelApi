@@ -1,8 +1,9 @@
-use std::{array::from_fn, cell::{Cell, OnceCell}, cmp::{self, min}, fs, i32, io::{self, IoSlice}, mem::{MaybeUninit, transmute}, num::NonZero, pin::Pin, result, sync::{Arc, LazyLock, MutexGuard, OnceLock, atomic::{AtomicI32, AtomicUsize, Ordering}}, task::{Context, Poll}};
+use std::{array::from_fn, cell::{Cell, OnceCell}, cmp::{self, min}, ffi::c_void, fs::{self, File}, i32, io::{self, IoSlice}, marker::PhantomData, mem::{MaybeUninit, transmute}, num::NonZero, os::fd::{AsRawFd, RawFd}, pin::Pin, result, sync::{Arc, LazyLock, MutexGuard, OnceLock, atomic::{AtomicI32, AtomicUsize, Ordering}}, task::{Context, Poll}};
 
 use bytes::{Buf, Bytes, BytesMut, buf::Chain};
 use futures_util::{stream::Next, task::AtomicWaker};
 use ::io_uring::{IoUring, opcode, squeue::Entry, types};
+use libc::iovec;
 use parking_lot::Mutex;
 use polling::{Event, Events, Poller};
 use portable_atomic::AtomicU8;
@@ -13,26 +14,51 @@ static AVAILABLE_PARALLELISM: LazyLock<usize> = LazyLock::new(|| {
     std::thread::available_parallelism().map_or(2, |i| i.get() * 2).next_power_of_two()
 });
 
-pub struct SubmissionOp<MUT: IoBufMut, CONST: IntoFixedIoVec> {
+pub struct SubmissionOp<MUT: IoBufMut, CONST: IntoFixedIoVec<B, N>, B: IoBuf, const N: usize>{
     file: RawFd,
-    typ: SubmissionType<MUT, CONST>,
+    typ: SubmissionType<MUT, CONST, B, N>,
 }
 
-impl<MUT: IoBufMut, CONST: IntoFixedIoVec> SubmissionOp<MUT, CONST> {
+impl<MUT: IoBufMut, CONST: IntoFixedIoVec<B, N>, B: IoBuf, const N: usize> SubmissionOp<MUT, CONST> {
     fn entry(&self, user_data: u64) -> Entry {
         match &self.typ {
-            SubmissionType::Read { ref mut buffer } => opcode::Read::new(self.file, buffer.stable_mut_ptr(), buffer.bytes_len()).build().user_data(user_data),
-            SubmissionType::Writev { buffer } => opcode::Writev::new(self.file, buffer.slices.as_ptr(), N as u32).build().user_data(user_data),
+            SubmissionType::Read { ref mut buffer } => opcode::Read::new(self.file, buffer.stable_mut_ptr(), buffer.bytes_len() as u32).build().user_data(user_data),
+            SubmissionType::Writev { buffer, _type: _ } => opcode::Writev::new(self.file, unsafe { buffer.slices().as_ptr() }, N as u32).build().user_data(user_data),
         }
     }
 }
 
-pub enum SubmissionType<MUT: IoBufMut, CONST: IntoFixedIoVec> {
+pub enum SubmissionType<MUT: IoBufMut, CONST: IntoFixedIoVec<B, N>, B: IoBuf, const N: usize>{
     Read {
         buffer: MUT,
     },
     Writev {
-        buffer: CONST,
+        buffer: FixedIoVec<B, N>,
+        _type: PhantomData<CONST>
+    }
+}
+
+impl<MUT: IoBufMut, CONST: IntoFixedIoVec<B, N>, B: IoBuf, const N: usize> SubmissionType<MUT, CONST, B, N> {
+    fn read(buf: MUT) -> Self {
+        Self::Read { buffer: buf }
+    }
+
+    fn write(buf: impl IntoFixedIoVec) -> Self {
+        Self::Writev { buffer: buf.into_fixed(), _type: PhantomData }
+    }
+
+    fn buffer_read(self) -> Option<MUT> {
+        match self {
+            Self::Read { buffer } => Some(buffer),
+            _ => None
+        }
+    }
+
+    fn buffer_write(self) -> Option<CONST> {
+        match self {
+            Self::Writev { buffer, _type: _} => Some(CONST::from_fixed(buffer)),
+            _ => None
+        }
     }
 }
 
@@ -46,21 +72,28 @@ impl ShardedUring {
         Self { shards }
     }
 
-    pub fn submit(&self, operation: ) {
-        let shard = self.assign_shard();
-        let locked = shard.inner.uring.lock();
-        let entry = opcode::Writev::new(fd, iovec, len)
-        locked.submission().push(entry)
+    pub fn submit<MUT: IoBufMut, CONST: IntoFixedIoVec<B, N>, B: IoBuf, const N: usize>(&self, file: &File, typ: SubmissionType<MUT, CONST, B, N>) -> Completion {
+        let op = SubmissionOp {
+            file: file.as_raw_fd(),
+            typ
+        };
+        let shard = self.assign_shard().clone();
+        let mut locked = shard.inner.uring.lock();
+        let user_data = shard.inner.operations.insert(Operation::new(operation)).expect("todo");
+        let entry = shard.inner.operations.get(user_data).expect("what").op().entry(u64::from(user_data));
+        unsafe { locked.submission().push(&entry); };
+
+        Completion { shard: shard, key: user_data, _data: PhantomData }
     }
     
     fn assign_shard(&self) -> &Shard {
-        let a = self.get_shard(fastrand::usize(..*AVAILABLE_PARALLELISM));
-        let b = self.get_shard(fastrand::usize(..*AVAILABLE_PARALLELISM));
+        let a = &self.shards[fastrand::usize(..*AVAILABLE_PARALLELISM)];
+        let b = &self.shards[fastrand::usize(..*AVAILABLE_PARALLELISM)];
         min(a, b)
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Shard {
     pub inner: Arc<ShardedInner>,
 }
@@ -72,18 +105,24 @@ impl Shard {
         }
     }
 }
-
-impl Ord for Shard {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.inner.cmp(&other.inner)
-    }
-}
-
-#[derive(PartialEq, Eq, PartialOrd)]
 pub struct ShardedInner {
     uring: Mutex<IoUring>,
     operations: Slab<Operation>,
     contention: AtomicUsize
+}
+
+impl PartialEq for ShardedInner {
+    fn eq(&self, other: &Self) -> bool {
+        self.contention.load(Ordering::Relaxed) == other.contention.load(Ordering::Relaxed)
+    }
+}
+
+impl Eq for ShardedInner {}
+
+impl PartialOrd for ShardedInner {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl Ord for ShardedInner {
@@ -92,10 +131,26 @@ impl Ord for ShardedInner {
     }
 }
 
-pub struct Operation {
+pub struct Operation<MUT: IoBufMut, CONST: IntoFixedIoVec<B, N>, B: IoBuf, const N: usize> {
     waker: AtomicWaker,
-    result: AtomicI32, // sentinal I32::MAX for unset. shouldnt be an os code i hope.
+    result: AtomicI32, // sentinal I32::MAX for unset. Not an os code.
     state: AtomicU8,
+    op: SubmissionOp<MUT, CONST, B, N>
+}
+
+impl<MUT: IoBufMut, CONST: IntoFixedIoVec<B, N>, B: IoBuf, const N: usize> Operation<MUT, CONST, B, N> {
+    fn new(op: SubmissionOp<MUT, CONST, B, N>) -> Self {
+        Self {
+            waker: AtomicWaker::new(),
+            result: AtomicI32::new(i32::MAX),
+            state: AtomicU8::new(STATE_UNSET),
+            op
+        }
+    } 
+
+    fn op(&self) -> &SubmissionOp<MUT, CONST> {
+        &self.op
+    }
 }
 
 pub const UNSET_RESULT: i32 = i32::MAX;
@@ -114,6 +169,7 @@ impl Operation {
 const STATE_PENDING: u8 = 0;
 const STATE_COMPLETED: u8 = 1;
 const STATE_CANCELLED: u8 = 2;
+const STATE_UNSET: u8 = 3;
 
 impl ShardedInner {
     fn new() -> Self {
@@ -125,7 +181,7 @@ impl ShardedInner {
     }
 
     fn drive_completions(&self) -> Result<bool, io::Error> {
-        let uring = match self.uring.try_lock() {
+        let mut uring = match self.uring.try_lock() {
             Some(guard) => guard,
             None => return Ok(false),
         };
@@ -149,34 +205,38 @@ impl ShardedInner {
                     op.waker.wake();
                 } else {
                     drop(op);
-                    self.operations.clear(key)
+                    self.operations.remove(key);
+                    self.contention.fetch_sub(1, Ordering::Relaxed);
                 }
             }
-
-            self.contention.fetch_sub(1, Ordering::Relaxed);
         }
 
         Ok(processed_any)
     }
 }
 
-pub struct Completion {
+pub struct Completion<MUT: IoBufMut, CONST: IntoFixedIoVec<B, N>, B: IoBuf, const N: usize> {
     shard: Shard,
     key: usize,
+    _data: PhantomData<(MUT, CONST)>
 }
 
-impl Future for Completion {
-    type Output = Result<usize, io::Error>;
+impl<MUT: IoBufMut, CONST: IntoFixedIoVec<B, N>, B: IoBuf, const N: usize> Future for Completion<MUT, CONST, B, N> {
+    type Output = Result<(SubmissionType<MUT, CONST, B, N>, usize), io::Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let op = self.shard.inner.operations.get(self.key).expect("what.");
         
         op.waker.register(cx.waker());
         if op.state.load(Ordering::Acquire) == STATE_COMPLETED {
-            let result = op.result();
+            let result = match op.result() {
+                Ok(res) => res,
+                Err(err) => return Poll::Ready(Err(err))
+            };
             drop(op);
-            self.shard.inner.operations.remove(self.key);
-            return Poll::Ready(result)
+            let op: Operation<MUT, CONST, B, N> = self.shard.inner.operations.take(self.key).expect("herm");
+            self.contention.fetch_sub(1, Ordering::Relaxed);
+            return Poll::Ready(Ok((op.op(), result)))
         }
         Poll::Pending
     }
@@ -222,27 +282,45 @@ fn drive_reactor_thread(shards: Arc<[Shard]>) {
 #[repr(C)]
 pub struct IoVec { pub base: *mut u8, pub len: usize } // compatible with libc::iovec probably
 
+impl IoVec {
+    fn libc(&self) -> iovec {
+        iovec {
+            iov_base: self.base as *mut c_void,
+            iov_len: self.len
+        }
+    }
+}
+
 pub struct FixedIoVec<B: IoBuf, const N: usize> {
     buffers: [B; N],
-    slices: [IoVec; N],
+    slices: [iovec; N],
 }
 
 impl<B: IoBuf, const N: usize> FixedIoVec<B, N> {
     pub fn new(bufs: [B; N]) -> Self {
         let mut this = Self {
             buffers: bufs,
-            slices: from_fn(|_| IoVec {
-                base: std::ptr::null_mut(),
-                len: 0,
+            slices: from_fn(|_| iovec {
+                iov_base: std::ptr::null_mut(),
+                iov_len: 0,
             }),
         };
     
-        this.slices = from_fn(|i| IoVec {
-            base: this.buffers[i].stable_ptr() as *mut u8,
-            len: this.buffers[i].bytes_len(),
+        this.slices = from_fn(|i| iovec {
+            iov_base: this.buffers[i].stable_ptr() as *mut c_void,
+            iov_len: this.buffers[i].bytes_len(),
         });
     
         this
+    }
+
+    /// SAFETY: Caller must ensure FixedIoVec does not move while this reference is alive.
+    pub unsafe fn slices(&mut self) -> &[iovec] {
+        self.slices = from_fn(|i| iovec {
+            iov_base: this.buffers[i].stable_ptr() as *mut c_void,
+            iov_len: this.buffers[i].bytes_len(),
+        });
+        &self.slices
     }
 }
 
@@ -264,7 +342,7 @@ impl<B: IoBuf, const N: usize> IntoFixedIoVec<B, N> for [B; N] {
 /// SAFETY: The caller must ensure that the buffer does not move or be dropped before the operation completes.
 pub unsafe trait IoBuf: Unpin + Send + 'static {
     fn stable_ptr(&self) -> *const u8;
-    fn bytes_len(&self) -> u32;
+    fn bytes_len(&self) -> usize;
 }
 
 /// SAFETY: The caller must ensure that the buffer does not move or be dropped before the operation completes.
@@ -278,8 +356,8 @@ unsafe impl IoBuf for Bytes {
         self.as_ptr()
     }
 
-    fn bytes_len(&self) -> u32 {
-        self.len() as u32
+    fn bytes_len(&self) -> usize {
+        self.len()
     }
 }
 
