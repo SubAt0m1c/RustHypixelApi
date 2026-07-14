@@ -98,10 +98,12 @@ impl<'a> PartitionRef<'a> {
         };
         fut.await.map(BytesMut::freeze)
     }
-    
-    /// This removes all keys from this partition that are shared by the entries dashmap
-    /// After removing these keys, it returns a future to a pending file deletion.
-    /// This will delete keys immedietly without being polled and on poll will delete the file.
+
+    /// Removes this partition from the partition map, while removing all keys from this
+    /// partition that are shared by the entries dashmap. After removing these keys, it 
+    /// returns a future to a pending file deletion.
+    /// This will delete itself and keys immedietly without being polled. When polled, it
+    /// will proceed with deleting the corresponding file.
     pub fn purge<RT: SendRuntime>(&self, entries: &HashMap<SizedBytes, CacheEntry, RapidHash>) -> impl Future<Output = Result<()>> + use<RT> {
         let guard = self.partitions.pin();
         let Some(partition) = self.partitions.remove(self.key, &guard) else {
