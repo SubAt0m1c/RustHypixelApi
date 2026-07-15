@@ -112,7 +112,7 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
                         inner.entries.compute(key, |existing| {
                             if let Some((_, value)) = existing {
                                 return match inner.partitions.get(value.partition_key) {
-                                    Some(old) if old.insertion_time > insert_time => Operation::Abort(()), // old" value is newer
+                                    Some(old) if old.insertion_time > insert_time => Operation::Abort(()), // "old" value is newer
                                     _ => Operation::Insert(cache_entry)
                                 }
                             }
@@ -132,7 +132,7 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
             res?;
         }
         
-        RT::spawn(run_expiration_task::<RT>(DbView::new(&inner), rx));
+        RT::spawn(run_expiration_task::<RT>(DbView::new(inner.clone()), rx));
         Ok(Self { inner })
     }
 
@@ -141,7 +141,7 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
         let (exp_tx, rx) = flume::unbounded::<ExpCMD>();
         let inner = Arc::new(DbInner::new(exp_tx, path));
 
-        RT::spawn(run_expiration_task::<RT>(DbView::new(&inner), rx));
+        RT::spawn(run_expiration_task::<RT>(DbView::new(inner.clone()), rx));
         Self { inner }
     }
 
@@ -215,15 +215,13 @@ pub(crate) struct DbView<RT: SendRuntime> {
 }
 
 impl<RT: SendRuntime> DbView<RT> {
-    pub(crate) fn new(inner: &Arc<DbInner<RT>>) -> Self {
-        Self {
-            inner: inner.clone()
-        }
+    pub(crate) fn new(inner: Arc<DbInner<RT>>) -> Self {
+        Self { inner }
     }
 
     pub(crate) fn purge_partition(&self, key: usize) -> impl Future<Output = Result<()>> + use<RT> {
         let Some(partition) = self.inner.partitions.get(key) else {
-            return Either::Left(ready(Err(Error::PARTITION_NOT_FOUND)));
+            return Either::Left(ready(Err(Error::PARTITION_NOT_FOUND))); // either because i want to return errors on the future itself
         };
 
         self.inner.partitions.remove(key); // sharded_slab has no problem letting us keep a reference while marking it to be deleted.

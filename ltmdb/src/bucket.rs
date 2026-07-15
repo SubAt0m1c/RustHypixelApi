@@ -47,14 +47,14 @@ impl Bucket {
         buckets: &'a HashMap<u64, Bucket, RapidHash>, 
         entry_key: SizedBytes, 
         entry_value: Bytes, 
-        partition_map: &'a Slab<Partition>, 
+        partition_map: &'a Slab<Partition>,     
         exp_tx: &'a Sender<ExpCMD>
     ) -> impl Future<Output = Result<(usize, PartitionEntry)>> + use<'a, RT> {
         let now = unix_secs();
         let rotation_future = match self.needs_rotate::<RT>(now) {
             Ok(path) => Either::Left(async move { // this needs to be a future so the new partition creation can be awaited.
                 // ensures the guard will be released if the future is dropped or function returns early.
-                let drop_guard = defer(|| buckets.pin().get(&bucket_id).map_or((), Bucket::rel_rotate));
+                let drop_guard = defer(|| buckets.pin().get(&bucket_id).map(Bucket::rel_rotate));
 
                 let partition = PendingPartition::new::<RT>(now, path).await?;
                 let new_key = partition.insert_into(partition_map).ok_or(Error::PARTITION_FAILED_INSERTION)?;
@@ -137,8 +137,8 @@ impl Bucket {
 /// packs a partition key and its insertion time into a single atomic u128.
 /// the bits are laid out as
 /// ```text
-/// | u32 (high) | u32    | u64 (low) |
-/// | 127..96    | 95..64 | 63..0     |
+/// | usize (u32 or u63) | u64 (low) |
+/// | 128..64            | 63..0     |
 /// ```
 #[derive(Debug)]
 pub(crate) struct ActivePartition {
