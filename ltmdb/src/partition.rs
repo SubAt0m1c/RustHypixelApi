@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 use std::{fs::File, io::{self, Read, Seek}, path::PathBuf};
+=======
+use std::{io::{self, Read, Seek}, ops::Deref, path::PathBuf};
+>>>>>>> 3d917652134995c164666ecb820f4fd60ea172a0
 
 use bytes::{Buf, Bytes, BytesMut};
 use crossbeam_queue::SegQueue;
@@ -6,7 +10,11 @@ use futures_util::TryFutureExt;
 use papaya::HashMap;
 use sharded_slab::Slab;
 
+<<<<<<< HEAD
 use crate::{Result, db::CacheEntry, file_handle::FileHandle, hasher::RapidHash, runtime::SendRuntime, sized_bytes::SizedBytes};
+=======
+use crate::{Error, Result, db::{CacheEntry, ParKey}, file_handle::{FileHandle, open_file}, hasher::RapidHash, runtime::SendRuntime, sized_bytes::SizedBytes};
+>>>>>>> 3d917652134995c164666ecb820f4fd60ea172a0
 
 const KEY_LEN_SIZE: usize = size_of::<u64>();
 const VALUE_LEN_SIZE: usize = size_of::<u64>();
@@ -133,7 +141,7 @@ impl Partition {
     pub fn from_file(now: u64, path: PathBuf) -> Result<(Vec<(SizedBytes, PartitionEntry)>, PendingPartition)> {
         const BUFFER_SIZE: usize = 8 * 1024 * 1024; // 8mb
         
-        let mut file = File::options().read(true).open(&path)?;
+        let mut file = open_file(&path)?;
         let mut buffer = BytesMut::with_capacity(BUFFER_SIZE);
         let mut entries: Vec<(SizedBytes, PartitionEntry)> = Vec::new();
         let keys: SegQueue<SizedBytes> = SegQueue::new();
