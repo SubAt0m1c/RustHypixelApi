@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-use std::{fs::File, io::{self, Read, Seek}, path::PathBuf};
-=======
-use std::{io::{self, Read, Seek}, ops::Deref, path::PathBuf};
->>>>>>> 3d917652134995c164666ecb820f4fd60ea172a0
+use std::{io::{self, Read, Seek}, path::PathBuf};
 
 use bytes::{Buf, Bytes, BytesMut};
 use crossbeam_queue::SegQueue;
@@ -10,11 +6,7 @@ use futures_util::TryFutureExt;
 use papaya::HashMap;
 use sharded_slab::Slab;
 
-<<<<<<< HEAD
-use crate::{Result, db::CacheEntry, file_handle::FileHandle, hasher::RapidHash, runtime::SendRuntime, sized_bytes::SizedBytes};
-=======
-use crate::{Error, Result, db::{CacheEntry, ParKey}, file_handle::{FileHandle, open_file}, hasher::RapidHash, runtime::SendRuntime, sized_bytes::SizedBytes};
->>>>>>> 3d917652134995c164666ecb820f4fd60ea172a0
+use crate::{Result, db::CacheEntry, file_handle::{FileHandle, open_file}, hasher::RapidHash, runtime::SendRuntime, sized_bytes::SizedBytes};
 
 const KEY_LEN_SIZE: usize = size_of::<u64>();
 const VALUE_LEN_SIZE: usize = size_of::<u64>();
@@ -182,7 +174,7 @@ impl Partition {
 
         let inner = PendingPartition {
             insertion_time: now,
-            file: FileHandle::new_sync(path)?,
+            file: FileHandle::from_file(file, path)?,
             keys,
         };
         
