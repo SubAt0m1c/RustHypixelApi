@@ -110,6 +110,7 @@ const fn read_u32(slice: &[u8], offset: usize) -> u32 {
 }
 
 #[inline(always)]
+#[allow(clippy::cast_possible_truncation)]
 const fn mum(a: u64, b: u64) -> (u64, u64) {
     let r = (a as u128).wrapping_mul(b as u128);
 
@@ -117,6 +118,7 @@ const fn mum(a: u64, b: u64) -> (u64, u64) {
 }
 
 #[inline(always)]
+#[allow(clippy::cast_possible_truncation)]
 const fn mix(a: u64, b: u64) -> u64 {
     let r = (a as u128).wrapping_mul(b as u128);
 

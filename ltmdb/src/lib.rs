@@ -9,8 +9,6 @@
 //! to match their ttl exactly, but rather be a "good enough"
 //! approximation. 
 
-#![allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-
 use std::{result::Result as StdResult, time::{Duration, SystemTime, UNIX_EPOCH}};
 
 mod hasher;

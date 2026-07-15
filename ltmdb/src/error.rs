@@ -6,12 +6,12 @@ use futures_util::TryFutureExt;
 
 #[derive(Debug)]
 pub struct Error {
-    kind: ErrorKind,
-    error: ErrorContent,
+    pub(crate) kind: ErrorKind,
+    pub(crate) error: ErrorContent,
 }
 
 #[derive(Debug)]
-enum ErrorContent {
+pub enum ErrorContent {
     Simple(&'static str),
     Err(Box<dyn StdError + Send + Sync>)
 }
@@ -21,6 +21,7 @@ pub enum ErrorKind {
     IoError,
     TaskError,
     PartitionError,
+    PartitionNotFound,
     BucketError,
     QueueError,
     Other(&'static str)
@@ -37,7 +38,8 @@ impl Display for ErrorKind {
 
 impl Error {
     pub const BUCKET_NOT_FOUND: Self = Self { kind: ErrorKind::BucketError, error: ErrorContent::Simple("Bucket Not Found!") };
-    pub const PARTITION_NOT_FOUND: Self = Self { kind: ErrorKind::PartitionError, error: ErrorContent::Simple("Partition Not Found!") };
+    pub const PARTITION_NOT_FOUND: Self = Self::partition_not_found("Removed before access!");
+    pub const PARTITION_FAILED_INSERTION: Self = Self::simple(ErrorKind::PartitionError, "Failed to insert partition!");
     
     pub fn err(kind: ErrorKind, err: impl StdError + Send + Sync + 'static) -> Self {
         Self {
@@ -45,10 +47,14 @@ impl Error {
         }
     }
 
-    pub fn simple(kind: ErrorKind, err: &'static str) -> Self {
+    pub const fn simple(kind: ErrorKind, err: &'static str) -> Self {
         Self {
             kind, error: ErrorContent::Simple(err)
         }
+    }
+
+    pub const fn partition_not_found(err: &'static str) -> Self {
+        Self::simple(ErrorKind::PartitionNotFound, err)
     }
 
     pub fn io(err: io::Error) -> Self {

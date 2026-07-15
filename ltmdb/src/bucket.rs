@@ -1,13 +1,13 @@
 use std::{fs, path::PathBuf, sync::atomic::{AtomicBool, Ordering}, time::Duration};
 
 use bytes::Bytes;
-use concurrent_slotmap::SlotMap;
 use flume::Sender;
 use futures_util::future::{Either, ready};
 use papaya::HashMap;
 use portable_atomic::AtomicU128;
+use sharded_slab::Slab;
 
-use crate::{Result, db::ParKey, defer::{Deferred, defer}, error::Error, expiration_queue::ExpCMD, hasher::RapidHash, partition::{Partition, PartitionEntry, PartitionMap}, runtime::SendRuntime, sized_bytes::SizedBytes, unix_secs};
+use crate::{Result, defer::{Deferred, defer}, error::Error, expiration_queue::ExpCMD, hasher::RapidHash, partition::{Partition, PartitionEntry, PendingPartition}, runtime::SendRuntime, sized_bytes::SizedBytes, unix_secs};
 
 const BUCKET_WINDOW: Duration = Duration::from_mins(1);
 
@@ -47,17 +47,17 @@ impl Bucket {
         buckets: &'a HashMap<u64, Bucket, RapidHash>, 
         entry_key: SizedBytes, 
         entry_value: Bytes, 
-        partition_map: &'a PartitionMap, 
+        partition_map: &'a Slab<Partition>, 
         exp_tx: &'a Sender<ExpCMD>
-    ) -> impl Future<Output = Result<(ParKey, PartitionEntry)>> + use<'a, RT> {
+    ) -> impl Future<Output = Result<(usize, PartitionEntry)>> + use<'a, RT> {
         let now = unix_secs();
         let rotation_future = match self.needs_rotate::<RT>(now) {
             Ok(path) => Either::Left(async move { // this needs to be a future so the new partition creation can be awaited.
                 // ensures the guard will be released if the future is dropped or function returns early.
                 let drop_guard = defer(|| buckets.pin().get(&bucket_id).map_or((), Bucket::rel_rotate));
-                
-                let new_partition = Partition::new::<RT>(path).await?;
-                let new_key = partition_map.insert(new_partition, &partition_map.pin());
+
+                let partition = PendingPartition::new::<RT>(now, path).await?;
+                let new_key = partition.insert_into(partition_map).ok_or(Error::PARTITION_FAILED_INSERTION)?;
         
                 let bucket_guard = buckets.guard();
                 let bucket = buckets.get(&bucket_id, &bucket_guard).ok_or(Error::BUCKET_NOT_FOUND)?;
@@ -74,14 +74,19 @@ impl Bucket {
         
         async move {
             let par_key = rotation_future.await?;
-            let partition = partition_map.get_ref(par_key).insert::<RT>(entry_key, entry_value).await?;
-            Ok::<(ParKey, PartitionEntry), Error>((par_key, partition))
+
+            let partition = partition_map.get(par_key).ok_or(Error::PARTITION_NOT_FOUND)?;
+            let insert_future = partition.insert::<RT>(entry_key, entry_value);
+            drop(partition); // drop the partition so we don't prevent its reclamation during the coming .await
+            
+            let partition_entry = insert_future.await?;
+            Ok::<(usize, PartitionEntry), Error>((par_key, partition_entry))
         }
     }
 
     /// Returns `Ok(pathbuf)` if the bucket needs to be rotated, `Err(ParKey)` otherwise.
     /// Acquires the rotation guard if a rotation is needed.
-    fn needs_rotate<RT: SendRuntime>(&self, now: u64) -> std::result::Result<PathBuf, ParKey> {
+    fn needs_rotate<RT: SendRuntime>(&self, now: u64) -> std::result::Result<PathBuf, usize> {
         let (current_key, rotated_at) = self.live_partition.load(Ordering::Relaxed);
         if now < rotated_at + BUCKET_WINDOW.as_secs() || !self.acq_rotate() {
             return Err(current_key)
@@ -97,14 +102,15 @@ impl Bucket {
         Ok(self.path.join(now.to_string()))
     }
 
-    pub async fn new<RT: SendRuntime>(path: PathBuf, now: u64, ttl: Duration, partition_map: &SlotMap<ParKey, Partition>, exp_tx: &Sender<ExpCMD>) -> Result<Self> {
+    pub async fn new<RT: SendRuntime>(path: PathBuf, now: u64, ttl: Duration, partition_map: &Slab<Partition>, exp_tx: &Sender<ExpCMD>) -> Result<Self> {
         let create_path = path.clone();
-        let new_partition = RT::spawn_blocking(move || {
+        let partition = RT::spawn_blocking(move || {
             fs::create_dir_all(&create_path)?;
             let part_path = create_path.join(now.to_string());
-            Partition::new_sync(part_path)
+            PendingPartition::new_sync(now, part_path)
         }).await??;
-        let par_key = partition_map.insert(new_partition, &partition_map.pin());
+        
+        let par_key = partition.insert_into(partition_map).ok_or(Error::PARTITION_FAILED_INSERTION)?;
         exp_tx.send(ExpCMD::Schedule { time: now + ttl.as_secs(), par_key }).map_err(Error::queue)?;
 
         Ok(Self {
@@ -141,26 +147,26 @@ pub(crate) struct ActivePartition {
 
 impl ActivePartition {
     #[inline]
-    pub fn new(key: ParKey, insertion_time: u64) -> Self {
+    pub fn new(key: usize, insertion_time: u64) -> Self {
         Self {
             value: AtomicU128::new(Self::pack(key, insertion_time))
         }
     }
 
     #[inline]
-    pub fn load(&self, order: Ordering) -> (ParKey, u64) {
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn load(&self, order: Ordering) -> (usize, u64) {
         let data = self.value.load(order);
-        (ParKey::new((data >> 96) as u32, (data >> 64) as u32), data as u64)
+        ((data >> 64) as usize, data as u64)
     }
 
     #[inline]
-    pub fn store(&self, key: ParKey, insertion_time: u64, order: Ordering) {
+    pub fn store(&self, key: usize, insertion_time: u64, order: Ordering) {
         self.value.store(Self::pack(key, insertion_time), order);
     }
 
     #[inline]
-    fn pack(key: ParKey, insertion_time: u64) -> u128 {
-        let (index, generation) = key.data();
-        u128::from(index) << 96 | u128::from(generation) << 64 | u128::from(insertion_time)
+    fn pack(key: usize, insertion_time: u64) -> u128 {
+        (key as u128) << 64 | u128::from(insertion_time)
     }
 }

@@ -1,62 +1,38 @@
-use std::{fs, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
+use std::{fs, future::ready, marker::PhantomData, path::{Path, PathBuf}, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use concurrent_slotmap::{Key, SlotId};
 use flume::Sender;
-use futures_util::{StreamExt, stream::FuturesUnordered};
-use papaya::HashMap;
+use futures_util::{StreamExt, future::Either, stream::FuturesUnordered};
+use papaya::{HashMap, Operation};
+use sharded_slab::Slab;
 
-use crate::{Result, bucket::{ActivePartition, Bucket}, error::Error, expiration_queue::{ExpCMD, run_expiration_task}, hasher::RapidHash, partition::{Partition, PartitionEntry, PartitionMap}, runtime::{Runtime, SendRuntime}, sized_bytes::SizedBytes, unix_secs};
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ParKey(SlotId);
-impl ParKey {
-    #[inline]
-    pub fn new(index: u32, generation: u32) -> Self {
-        let key = if generation & SlotId::STATE_MASK == SlotId::OCCUPIED_TAG {
-            // SAFETY: Just checked that generation is occupied
-            unsafe { SlotId::new_unchecked(index, generation) } 
-        } else {
-            SlotId::INVALID
-        };
-        
-        Self(key)
-    }
-
-    #[inline]
-    pub fn data(self) -> (u32, u32) {
-        (self.0.index(), self.0.generation())
-    }
-}
-
-impl Key for ParKey {
-    #[inline]
-    fn from_id(value: SlotId) -> Self {
-        Self(value)
-    }
-
-    #[inline]
-    fn as_id(self) -> SlotId {
-        self.0
-    }
-}
+use crate::{ErrorKind, Result, bucket::{ActivePartition, Bucket}, error::Error, expiration_queue::{ExpCMD, run_expiration_task}, hasher::RapidHash, partition::{Partition, PartitionEntry}, runtime::{Runtime, SendRuntime}, sized_bytes::SizedBytes, unix_secs};
 
 #[derive(Clone, Copy)]
 pub(crate) struct CacheEntry {
-    partition_key: ParKey,
+    partition_key: usize,
     position: PartitionEntry,
+}
+
+impl CacheEntry {
+    pub fn par_key(self) -> usize {
+        self.partition_key
+    }
 }
 
 /// Lifetime managed key-value store.
 /// Async down to file io (handled by input runtime)
 /// Expirations are delegated to a background expiration task and batched by a 1 minute window
+/// 
+/// Data is not fsynced ever to keep writes as fast as possible. Recently written values must 
+/// not be assumed to persist on crashes.
 #[derive(Clone)]
 pub struct Database<RT: Runtime + Send + Sync + 'static> {
     inner: Arc<DbInner<RT>>
 }
 
 pub(crate) struct DbInner<RT: SendRuntime> {
-    partitions: PartitionMap,
+    partitions: Slab<Partition>,
     entries: HashMap<SizedBytes, CacheEntry, RapidHash>,
     buckets: HashMap<u64, Bucket, RapidHash>,
     exp_tx: Sender<ExpCMD>,
@@ -69,7 +45,7 @@ impl<RT: SendRuntime> DbInner<RT> {
         Self {
             buckets: HashMap::with_hasher(RapidHash::default()),
             entries: HashMap::with_hasher(RapidHash::default()),
-            partitions: PartitionMap::new(180), // if max_capacity is too low, it will panic with `capacity overflow` on insert. 
+            partitions: Slab::new(), // if max_capacity is too low, it will panic with `capacity overflow` on insert. 
             exp_tx,
             path: path.into(),
             _phantom: PhantomData
@@ -82,15 +58,15 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
     /// 
     /// # Errors
     /// Returns an error if any io operations failed or a spawned task returns an error.
-    pub async fn load(path: &'static str) -> Result<Self> {
+    pub async fn load(path: impl AsRef<Path> + Send + Sync + 'static) -> Result<Self> {
         let (exp_tx, rx) = flume::unbounded::<ExpCMD>();
 
-        let inner: Arc<DbInner<RT>> = Arc::new(DbInner::new(exp_tx, path));
+        let inner: Arc<DbInner<RT>> = Arc::new(DbInner::new(exp_tx, path.as_ref()));
 
         let mut bucket_futures = FuturesUnordered::new();
         for entry in RT::spawn_blocking(move || {
-            fs::create_dir_all(path)?;
-            fs::read_dir(path)
+            fs::create_dir_all(&path)?;
+            fs::read_dir(&path)
         }).await?? {
             let entry = entry?;
             if !entry.file_type()?.is_dir() { continue }
@@ -100,7 +76,7 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
             let bucket_ttl = Duration::from_millis(bucket_millis);
             let bucket_id = bucket_ttl.as_secs();
             let mut last_insertion = 0;
-            let mut last_par_key = ParKey::from_id(SlotId::INVALID);
+            let mut last_par_key = usize::MAX;
 
             let inner = inner.clone();
             bucket_futures.push(async move {
@@ -112,15 +88,15 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
                     let Some(insert_time) = entry.file_name().into_string().ok().and_then(|n| n.parse::<u64>().ok()) else { continue };
 
                     partition_futures.push(async move {
-                        let partition_res = RT::spawn_blocking(move || Partition::from_file(entry.path())).await.flatten();
+                        let partition_res = RT::spawn_blocking(move || Partition::from_file(insert_time, entry.path())).await.flatten();
                         (insert_time, partition_res)
                     });
                 }
                 
                 while let Some((insert_time, partition_res)) = partition_futures.next().await {
                     let (keys, partition) = partition_res?;
-                    
-                    let par_key = inner.partitions.insert(partition, &inner.partitions.pin());
+
+                    let par_key = partition.insert_into(&inner.partitions).ok_or(Error::PARTITION_FAILED_INSERTION)?;
                     inner.exp_tx.send(ExpCMD::Schedule { time: insert_time + bucket_id, par_key }).map_err(Error::queue)?;
 
                     if insert_time > last_insertion {
@@ -131,7 +107,17 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
                     let guard = inner.entries.guard();
                     for (key, entry) in keys {
                         let cache_entry = CacheEntry { partition_key: par_key, position: entry, };
-                        let _ = inner.entries.insert(key, cache_entry, &guard);
+
+                        // this bit ensures only the most recent value is kept. Otherwise, it would be based on task scheduling and which one inserted last.
+                        inner.entries.compute(key, |existing| {
+                            if let Some((_, value)) = existing {
+                                return match inner.partitions.get(value.partition_key) {
+                                    Some(old) if old.insertion_time > insert_time => Operation::Abort(()), // old" value is newer
+                                    _ => Operation::Insert(cache_entry)
+                                }
+                            }
+                            Operation::Insert(cache_entry)
+                        }, &guard);
                     }
                 }
 
@@ -161,12 +147,8 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
 
     /// inserts a key value pair into the database with a given ttl.
     /// 
-    /// inserting an entry that already exists will have the following behavior.
-    /// * old reference will be removed. Only the new value can be accessed.
-    /// * new value will not be accessable after the first entry's ttl has expired.
-    /// * neither entry's written data will be removed until their proper ttl.
-    /// 
-    /// this behavior will persist on db load.
+    /// If an entry already exists, the old value will be replaced with the new.
+    /// Old values will remain on disk until their original ttl has expired.
     /// 
     /// # Errors
     /// Returns an error if any io operations failed or a spawned task returns an error.
@@ -195,11 +177,11 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
         drop(guard); // drop the guard for the upcoming .await
         
         let (partition_key, position) = insert_future.await?;
-        let _ = self.inner.entries.pin().insert(entry_key, CacheEntry { partition_key, position });
+        self.inner.entries.pin().insert(entry_key, CacheEntry { partition_key, position });
         Ok(())
     }
 
-    fn insert_into<'a>(&'a self, bucket: &Bucket, bucket_id: u64, entry_key: SizedBytes, entry_value: Bytes) -> impl Future<Output = Result<(ParKey, PartitionEntry)>> + use<'a, RT> {
+    fn insert_into<'a>(&'a self, bucket: &Bucket, bucket_id: u64, entry_key: SizedBytes, entry_value: Bytes) -> impl Future<Output = Result<(usize, PartitionEntry)>> + use<'a, RT> {
         bucket.insert::<RT>(bucket_id, &self.inner.buckets, entry_key, entry_value, &self.inner.partitions, &self.inner.exp_tx)
     }
     
@@ -213,7 +195,15 @@ impl<RT: Runtime + Send + Sync + 'static> Database<RT> {
             return Ok(None)
         };
 
-        self.inner.partitions.get_ref(partition_key).read::<RT>(position).await.map(Some)
+        let partition = self.inner.partitions.get(partition_key).ok_or(Error::PARTITION_NOT_FOUND)?;
+        let read_future = partition.read::<RT>(position);
+        drop(partition);
+        
+        match read_future.await {
+            Ok(value) => Ok(Some(value)),
+            Err(Error { kind: ErrorKind::PartitionNotFound, .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -231,7 +221,12 @@ impl<RT: SendRuntime> DbView<RT> {
         }
     }
 
-    pub(crate) fn purge_partition(&self, key: ParKey) -> impl Future<Output = Result<()>> + use<RT> {
-        self.inner.partitions.get_ref(key).purge::<RT>(&self.inner.entries)
+    pub(crate) fn purge_partition(&self, key: usize) -> impl Future<Output = Result<()>> + use<RT> {
+        let Some(partition) = self.inner.partitions.get(key) else {
+            return Either::Left(ready(Err(Error::PARTITION_NOT_FOUND)));
+        };
+
+        self.inner.partitions.remove(key); // sharded_slab has no problem letting us keep a reference while marking it to be deleted.
+        Either::Right(partition.purge::<RT>(&self.inner.entries))
     }
 }

@@ -1,37 +1,16 @@
-use std::{fs::File, io::{self, Read, Seek}, ops::Deref, path::PathBuf};
+use std::{fs::File, io::{self, Read, Seek}, path::PathBuf};
 
 use bytes::{Buf, Bytes, BytesMut};
-use concurrent_slotmap::SlotMap;
 use crossbeam_queue::SegQueue;
-use futures_util::future::{Either, ready};
+use futures_util::TryFutureExt;
 use papaya::HashMap;
+use sharded_slab::Slab;
 
-use crate::{Error, Result, db::{CacheEntry, ParKey}, file_handle::FileHandle, hasher::RapidHash, runtime::SendRuntime, sized_bytes::SizedBytes};
+use crate::{Result, db::CacheEntry, file_handle::FileHandle, hasher::RapidHash, runtime::SendRuntime, sized_bytes::SizedBytes};
 
 const KEY_LEN_SIZE: usize = size_of::<u64>();
 const VALUE_LEN_SIZE: usize = size_of::<u64>();
 
-pub(crate) struct PartitionMap {
-    map: SlotMap<ParKey, Partition>
-}
-
-impl PartitionMap {
-    pub fn new(max_capacity: u32) -> Self {
-        Self { map: SlotMap::with_key(max_capacity) }
-    }
-    
-    pub fn get_ref(&self, key: ParKey) -> PartitionRef<'_> {
-        PartitionRef::new(key, self)
-    }
-}
-
-impl Deref for PartitionMap {
-    type Target = SlotMap<ParKey, Partition>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.map
-    }
-}
 
 #[derive(Clone, Copy)]
 pub(crate) struct PartitionEntry {
@@ -39,20 +18,62 @@ pub(crate) struct PartitionEntry {
     value_len: usize
 }
 
-pub(crate) struct PartitionRef<'a> {
-    key: ParKey,
-    partitions: &'a PartitionMap
+pub(crate) struct PendingPartition {
+    insertion_time: u64,
+    file: FileHandle,
+    keys: SegQueue<SizedBytes>
 }
 
-impl<'a> PartitionRef<'a> {
-    pub fn new(key: ParKey, partitions: &'a PartitionMap) -> Self {
-        Self { key, partitions }
+impl PendingPartition {
+    pub async fn new<RT: SendRuntime>(now: u64, path: PathBuf) -> Result<Self> {
+        Ok(Self {
+            insertion_time: now,
+            file: FileHandle::new::<RT>(path).await?,
+            keys: SegQueue::new(),
+        })
+    }
+    
+    pub fn new_sync(now: u64, path: PathBuf) -> Result<Self> {
+        Ok(Self {
+            insertion_time: now,
+            file: FileHandle::new_sync(path)?,
+            keys: SegQueue::new(),
+        })
     }
 
-    pub async fn insert<RT: SendRuntime>(&self, entry_key: SizedBytes, entry_value: Bytes) -> Result<PartitionEntry> {
+    /// Inserts this pending partition into the given slab of partitions.
+    /// 
+    /// Returns the key of the inserted partition, or `None` if the slab is full.
+    pub fn insert_into(self, partitions: &Slab<Partition>) -> Option<usize> {
+        let vacent = partitions.vacant_entry()?;
+        let key = vacent.key();
+        vacent.insert(self.construct(key));
+        Some(key)
+    }
+    
+    fn construct(self, key: usize) -> Partition {
+        Partition {
+            insertion_time: self.insertion_time,
+            key,
+            file: self.file,
+            keys: self.keys,
+        }
+    }
+}
+
+pub(crate) struct Partition {
+    pub insertion_time: u64,
+    pub key: usize,
+    pub file: FileHandle,
+    pub keys: SegQueue<SizedBytes>
+}
+
+impl Partition {
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn insert<RT: SendRuntime>(&self, entry_key: SizedBytes, entry_value: Bytes) -> impl Future<Output = Result<PartitionEntry>> + use<RT> {
         let key_len = entry_key.len() as u64;
         let value_len = entry_value.len() as u64;
-
+        
         let buf;
         #[cfg(unix)]
         {
@@ -79,78 +100,37 @@ impl<'a> PartitionRef<'a> {
             buf = buffer.freeze();
         }
         
-        let write_location = self.append_from::<RT, _>(buf).await?;
-
-        self.insert_key(entry_key);
-        
-        Ok(PartitionEntry {
-            position: write_location + KEY_LEN_SIZE as u64 + key_len + VALUE_LEN_SIZE as u64,
-            value_len: value_len as usize
+        self.keys.push(entry_key);
+        self.append_from::<RT, _>(buf).map_ok(move |write_location| {
+            PartitionEntry {
+                position: write_location + KEY_LEN_SIZE as u64 + key_len + VALUE_LEN_SIZE as u64,
+                value_len: value_len as usize
+            }
         })
     }
 
-    #[inline]
-    pub async fn read<RT: SendRuntime>(&self, position: PartitionEntry) -> Result<Bytes> {
-        let fut = {
-            let guard = self.partitions.pin();
-            let partition = self.partitions.get(self.key, &guard).ok_or(Error::PARTITION_NOT_FOUND)?;
-            partition.file.read_to::<RT>(position.position, BytesMut::zeroed(position.value_len))
-        };
-        fut.await.map(BytesMut::freeze)
-    }
-    
     /// This removes all keys from this partition that are shared by the entries dashmap
     /// After removing these keys, it returns a future to a pending file deletion.
     /// This will delete keys immedietly without being polled and on poll will delete the file.
     pub fn purge<RT: SendRuntime>(&self, entries: &HashMap<SizedBytes, CacheEntry, RapidHash>) -> impl Future<Output = Result<()>> + use<RT> {
-        let guard = self.partitions.pin();
-        let Some(partition) = self.partitions.remove(self.key, &guard) else {
-            return Either::Left(ready(Err(Error::PARTITION_NOT_FOUND))) // futures either here so i can return an error on the future itself.
-        };
-        
         let guard = entries.guard();
-        while let Some(key) = partition.keys.pop() {
-            entries.remove(&key, &guard);
-        }; 
-        
-        Either::Right(partition.file.delete::<RT>())
+        while let Some(key) = self.keys.pop() {
+            let _ = entries.remove_if(&key, |_, v| v.par_key() == self.key, &guard);
+        }
+        self.file.delete::<RT>()
     }
 
-    async fn append_from<RT: SendRuntime, B: Buf + Send + Sync + 'static>(&self, buf: B) -> Result<u64> {
-        let fut = {
-            let guard = self.partitions.pin();
-            let partition = self.partitions.get(self.key, &guard).ok_or(Error::PARTITION_NOT_FOUND)?;
-            partition.file.append_from::<RT, _>(buf)
-        };
-        fut.await
+    pub fn read<RT: SendRuntime>(&self, position: PartitionEntry) -> impl Future<Output = Result<Bytes>> + use<RT> {
+        self.file.read_to::<RT>(position.position, BytesMut::zeroed(position.value_len)).map_ok(BytesMut::freeze)
     }
 
-    fn insert_key(&self, key: SizedBytes) {
-        self.partitions.get(self.key, &self.partitions.pin()).inspect(|b| b.keys.push(key));
+    pub fn append_from<RT: SendRuntime, B: Buf + Send + Sync + 'static>(&self, buf: B) -> impl Future<Output = Result<u64>> + use<RT, B> {
+        self.file.append_from::<RT, _>(buf)
     }
-}
-
-pub(crate) struct Partition {
-    pub file: FileHandle,
-    pub keys: SegQueue<SizedBytes>
-}
-
-impl Partition {
-    pub async fn new<RT: SendRuntime>(path: PathBuf) -> Result<Self> {
-        let inner = Partition {
-            file: FileHandle::new::<RT>(path).await?,
-            keys: SegQueue::new(),
-        };
-        Ok(inner)
-    }
-
-    pub fn new_sync(path: PathBuf) -> Result<Self> {
-        let file = FileHandle::new_sync(path)?;
-        Ok(Partition { file, keys: SegQueue::new() })
-    }
-
-    /// creates a partition file by reading an existing file. Returns a vec of key/entry pairs it contains.
-    pub fn from_file(path: PathBuf) -> Result<(Vec<(SizedBytes, PartitionEntry)>, Self)> {
+    
+    /// creates a partition file by reading an existing file. Returns a partition pending key insertion.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    pub fn from_file(now: u64, path: PathBuf) -> Result<(Vec<(SizedBytes, PartitionEntry)>, PendingPartition)> {
         const BUFFER_SIZE: usize = 8 * 1024 * 1024; // 8mb
         
         let mut file = File::options().read(true).open(&path)?;
@@ -192,7 +172,8 @@ impl Partition {
             position += value_len;
         }
 
-        let inner = Self {
+        let inner = PendingPartition {
+            insertion_time: now,
             file: FileHandle::new_sync(path)?,
             keys,
         };

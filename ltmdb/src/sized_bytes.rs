@@ -87,6 +87,7 @@ impl Buf for SizedBytes {
     }
     
     #[inline]
+    #[allow(clippy::cast_possible_truncation)]
     fn advance(&mut self, cnt: usize) {
         match &mut self.inner {
             Inner::Inline { len, cursor, .. } => {
@@ -112,6 +113,7 @@ impl Buf for SizedBytes {
 
 impl From<&[u8]> for SizedBytes {
     #[inline]
+    #[allow(clippy::cast_possible_truncation)]
     fn from(value: &[u8]) -> Self {
         if value.len() <= MAX_INLINE_WORD_LENGTH {
             let mut bytes = [0u8; MAX_INLINE_WORD_LENGTH];
@@ -124,6 +126,7 @@ impl From<&[u8]> for SizedBytes {
 
 impl<const N: usize> From<[u8; N]> for SizedBytes {
     #[inline]
+    #[allow(clippy::cast_possible_truncation)]
     fn from(value: [u8; N]) -> Self {
         if const { N <= MAX_INLINE_WORD_LENGTH } {
             let mut bytes = [0u8; MAX_INLINE_WORD_LENGTH];

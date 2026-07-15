@@ -5,19 +5,19 @@ use flume::{Receiver, TryRecvError};
 use futures_timer::Delay;
 use futures_util::{FutureExt, StreamExt, TryFutureExt, stream::FuturesUnordered};
 
-use crate::{db::{DbView, ParKey}, runtime::SendRuntime, unix_secs};
+use crate::{db::DbView, runtime::SendRuntime, unix_secs};
 
 pub(crate) enum ExpCMD {
     Schedule {
         time: u64,
-        par_key: ParKey,
+        par_key: usize,
     }
 }
 
 #[derive(PartialEq, Eq)]
 pub(crate) struct QueueEntry {
     time: u64,
-    par_key: ParKey,
+    par_key: usize,
     retries: u64,
 }
 
