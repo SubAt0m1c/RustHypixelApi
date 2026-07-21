@@ -11,7 +11,7 @@
 use std::{fs::{self, File, OpenOptions}, io::{self, ErrorKind}, path::{Path, PathBuf}, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 
 use bytes::{Buf, BytesMut};
-use crate::{Result, ResultExt, error::Error, runtime::SendRuntime};
+use crate::{Result, ResultExt, error::Error, runtime::Runtime};
 
 pub(crate) struct FileHandle {
     inner: Arc<Inner>
@@ -24,7 +24,7 @@ struct Inner {
 }
 
 impl FileHandle {
-    pub async fn new<RT: SendRuntime>(path: PathBuf) -> Result<Self> {
+    pub async fn new<RT: Runtime>(path: PathBuf) -> Result<Self> {
         let inner_path = path.clone();
         let (file, offset) = RT::spawn_blocking(move || {
             let file = open_file(&inner_path)?;
@@ -53,29 +53,31 @@ impl FileHandle {
         })
     }
 
-    pub fn append_from<RT: SendRuntime, B: Buf + Send + Sync + 'static>(&self, buf: B) ->  impl Future<Output = Result<u64>> + use<RT, B> {
+    pub fn append_from<RT: Runtime, B: Buf + Send + Sync + 'static>(&self, buf: B) ->  impl Future<Output = Result<u64>> + use<RT, B> {
         let inner = self.inner.clone();
         let len = buf.remaining() as u64;
         RT::spawn_blocking(move || {
             let start = inner.offset.fetch_add(len, Ordering::Relaxed); // reserve unique space to prevent concurrent writes to the same location.
-            write_all_buf_at(&inner.file, start, buf)?;
+            write_all_at(&inner.file, start, buf)?;
             Ok::<_, Error>(start)
         }).flatten()
     }
 
-    pub fn read_to<RT: SendRuntime>(&self, offset: u64, mut buf: BytesMut) -> impl Future<Output = Result<BytesMut>> + use<RT> {
+    pub fn read_to<RT: Runtime>(&self, offset: u64, mut buf: BytesMut) -> impl Future<Output = Result<BytesMut>> + use<RT> {
         let inner = self.inner.clone();
         RT::spawn_blocking(move || {
-            read_exact(&inner.file, offset, &mut buf)?;
+            read_at_exact(&inner.file, offset, &mut buf)?;
             Ok::<_, Error>(buf)
         }).flatten()
     }
 
-    pub fn delete<RT: SendRuntime>(&self) -> impl Future<Output = Result<()>> + use<RT> {
+    pub fn delete<RT: Runtime>(&self) -> impl Future<Output = Result<()>> + use<RT> {
         let inner = self.inner.clone();
         RT::spawn_blocking(move || fs::remove_file(&inner.path).map_err(Into::into)).flatten()
-    }   
+    }
 }
+
+
 
 /// opens a `file` with the options needed for the `FileHandle`
 pub(crate) fn open_file<P: AsRef<Path>>(path: P) -> io::Result<File> {
@@ -93,7 +95,7 @@ pub(crate) fn open_file<P: AsRef<Path>>(path: P) -> io::Result<File> {
 /// If this is not enforced, the os will handle the concurrent writes, which may lead to data 
 /// loss.
 #[allow(unused_mut)]
-fn write_all_buf_at<B: Buf>(
+fn write_all_at<B: Buf>(
     file: &File,
     mut offset: u64,
     mut buf: B,
@@ -113,7 +115,7 @@ fn write_all_buf_at<B: Buf>(
     Ok(())
 }
 
-fn read_exact(file: &File, mut offset: u64, mut buf: &mut [u8]) -> io::Result<()> {
+fn read_at_exact(file: &File, mut offset: u64, mut buf: &mut [u8]) -> io::Result<()> {
     while !buf.is_empty() {
         match read_at(file, offset, buf) {
             Ok(0) => return Err(io::Error::new(ErrorKind::UnexpectedEof, "failed to fill whole buffer")),

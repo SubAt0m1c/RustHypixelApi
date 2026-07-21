@@ -1,9 +1,11 @@
 //! ltmdb is a lifetime managed key-value store.
 //! entries are mapped by their ttl (time to live) to a file.
-//! files are written to during a window, after which a new
-//! file begins being written to. After the ttl of
-//! the file has passed, it is entirely deleted, removing all
-//! entries from that file.
+//! 
+//! This database does not function by transactions.
+//! Writes are given to the os immedietely. 
+//! There are no durability gurantees.
+//! Reads after writes are guranteed to include the data written by the write.
+//! Concurrent reads do not support this gurantee.
 //! 
 //! Due to file-batched removals, entries should not expect their lifetime
 //! to match their ttl exactly, but rather be a "good enough"

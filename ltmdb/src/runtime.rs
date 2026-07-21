@@ -1,9 +1,6 @@
 use crate::error::Error;
 
-pub(crate) trait SendRuntime: Runtime + Send + Sync + 'static {}
-impl<T: Runtime + Send + Sync + 'static> SendRuntime for T {}
-
-pub trait Runtime {
+pub trait Runtime: Send + Sync + 'static {
     /// Spawns a runtime scheduled task.
     /// 
     /// Currently only used to handle the expiration queue.

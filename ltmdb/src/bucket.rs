@@ -2,12 +2,12 @@ use std::{fs, path::PathBuf, sync::atomic::{AtomicBool, Ordering}, time::Duratio
 
 use bytes::Bytes;
 use flume::Sender;
-use futures_util::future::{Either, ready};
+use futures_util::future::{Either, ok};
 use papaya::HashMap;
 use portable_atomic::AtomicU128;
 use sharded_slab::Slab;
 
-use crate::{Result, defer::{Deferred, defer}, error::Error, expiration_queue::ExpCMD, hasher::RapidHash, partition::{Partition, PartitionEntry, PendingPartition}, runtime::SendRuntime, sized_bytes::SizedBytes, unix_secs};
+use crate::{Result, db::CacheEntry, defer::{Deferred, defer}, error::Error, expiration_queue::ExpCMD, hasher::RapidHash, partition::{Partition, PendingPartition}, runtime::Runtime, sized_bytes::SizedBytes, unix_secs};
 
 const BUCKET_WINDOW: Duration = Duration::from_mins(1);
 
@@ -41,7 +41,7 @@ impl Bucket {
     /// 
     /// requires `bucket_id` and `buckets` to be passed in so the future can reacquire the bucket
     /// when the future has internally finished awaiting.
-    pub fn insert<'a, RT: SendRuntime>(
+    pub fn insert<'a, RT: Runtime>(
         &self, 
         bucket_id: u64,
         buckets: &'a HashMap<u64, Bucket, RapidHash>, 
@@ -49,27 +49,27 @@ impl Bucket {
         entry_value: Bytes, 
         partition_map: &'a Slab<Partition>,     
         exp_tx: &'a Sender<ExpCMD>
-    ) -> impl Future<Output = Result<(usize, PartitionEntry)>> + use<'a, RT> {
+    ) -> impl Future<Output = Result<CacheEntry>> + use<'a, RT> {
         let now = unix_secs();
-        let rotation_future = match self.needs_rotate::<RT>(now) {
+        let rotation_future = match self.needs_rotate(now) {
             Ok(path) => Either::Left(async move { // this needs to be a future so the new partition creation can be awaited.
                 // ensures the guard will be released if the future is dropped or function returns early.
                 let drop_guard = defer(|| buckets.pin().get(&bucket_id).map(Bucket::rel_rotate));
 
                 let partition = PendingPartition::new::<RT>(now, path).await?;
-                let new_key = partition.insert_into(partition_map).ok_or(Error::PARTITION_FAILED_INSERTION)?;
-        
+                let new_key = partition.insert_into(partition_map)?;
+                
                 let bucket_guard = buckets.guard();
                 let bucket = buckets.get(&bucket_id, &bucket_guard).ok_or(Error::BUCKET_NOT_FOUND)?;
                 exp_tx.send(ExpCMD::Schedule { time: now + bucket.ttl.as_secs(), par_key: new_key }).map_err(Error::queue)?;
                 bucket.live_partition.store(new_key, now, Ordering::Relaxed);
-        
+                
                 bucket.rel_rotate(); // release the rotation guard here so we don't try to re-acquire the `bucket_guard` when we don't need to.
                 drop_guard.cancel(); // we have already released the rotation guard, so we need to cancel to prevent it from being run again.
 
                 Ok::<_, Error>(new_key)
             }),
-            Err(current_key) => Either::Right(ready(Ok(current_key)))
+            Err(current_key) => Either::Right(ok(current_key))
         };
         
         async move {
@@ -79,30 +79,37 @@ impl Bucket {
             let insert_future = partition.insert::<RT>(entry_key, entry_value);
             drop(partition); // drop the partition so we don't prevent its reclamation during the coming .await
             
-            let partition_entry = insert_future.await?;
-            Ok::<(usize, PartitionEntry), Error>((par_key, partition_entry))
+            let position = insert_future.await?;
+            Ok::<_, Error>(CacheEntry::new(par_key, position))
         }
     }
 
     /// Returns `Ok(pathbuf)` if the bucket needs to be rotated, `Err(ParKey)` otherwise.
     /// Acquires the rotation guard if a rotation is needed.
-    fn needs_rotate<RT: SendRuntime>(&self, now: u64) -> std::result::Result<PathBuf, usize> {
+    pub(crate) fn needs_rotate(&self, now: u64) -> std::result::Result<PathBuf, usize> {
         let (current_key, rotated_at) = self.live_partition.load(Ordering::Relaxed);
-        if now < rotated_at + BUCKET_WINDOW.as_secs() || !self.acq_rotate() {
+        if now < rotated_at + BUCKET_WINDOW.as_secs() {
             return Err(current_key)
+        }
+
+        // Attempt to acquire the rotation lock. If this fails, we can safely return a reference to a stale partition.
+        // This is fine because we dont promise keys will be deleted exactly on their ttl expiration.
+        if !self.acq_rotate() {
+            return Err(current_key) 
         }
 
         // Check for rotation again since another thread may have rotated between our first load and guard acquisition.
         let (current_key, rotated_at) = self.live_partition.load(Ordering::Relaxed);
         if now < rotated_at + BUCKET_WINDOW.as_secs() {
-            self.rel_rotate(); // release the guard since we don't actually need to do a rotate anymore.
+            // Confirmed another thread already rotated, so we can release the guard and return the current key again.
+            self.rel_rotate();
             return Err(current_key)
         }
 
         Ok(self.path.join(now.to_string()))
     }
 
-    pub async fn new<RT: SendRuntime>(path: PathBuf, now: u64, ttl: Duration, partition_map: &Slab<Partition>, exp_tx: &Sender<ExpCMD>) -> Result<Self> {
+    pub async fn new<RT: Runtime>(path: PathBuf, now: u64, ttl: Duration, partition_map: &Slab<Partition>, exp_tx: &Sender<ExpCMD>) -> Result<Self> {
         let create_path = path.clone();
         let partition = RT::spawn_blocking(move || {
             fs::create_dir_all(&create_path)?;
@@ -110,7 +117,7 @@ impl Bucket {
             PendingPartition::new_sync(now, part_path)
         }).await??;
         
-        let par_key = partition.insert_into(partition_map).ok_or(Error::PARTITION_FAILED_INSERTION)?;
+        let par_key = partition.insert_into(partition_map)?;
         exp_tx.send(ExpCMD::Schedule { time: now + ttl.as_secs(), par_key }).map_err(Error::queue)?;
 
         Ok(Self {

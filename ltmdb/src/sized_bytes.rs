@@ -143,3 +143,17 @@ impl From<Bytes> for SizedBytes {
         SizedBytes { inner: Inner::Bytes(value) }
     }
 }
+
+impl From<&str> for SizedBytes {
+    #[inline]
+    fn from(value: &str) -> Self {
+        Self::from(value.as_bytes())
+    }
+}
+
+impl From<String> for SizedBytes {
+    #[inline]
+    fn from(value: String) -> Self {
+        Self::from(Bytes::from(value))
+    }
+}

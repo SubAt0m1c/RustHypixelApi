@@ -6,11 +6,10 @@ use futures_util::TryFutureExt;
 use papaya::HashMap;
 use sharded_slab::Slab;
 
-use crate::{Result, db::CacheEntry, file_handle::{FileHandle, open_file}, hasher::RapidHash, runtime::SendRuntime, sized_bytes::SizedBytes};
+use crate::{Error, Result, db::CacheEntry, file_handle::{FileHandle, open_file}, hasher::RapidHash, runtime::Runtime, sized_bytes::SizedBytes};
 
 const KEY_LEN_SIZE: usize = size_of::<u64>();
 const VALUE_LEN_SIZE: usize = size_of::<u64>();
-
 
 #[derive(Clone, Copy)]
 pub(crate) struct PartitionEntry {
@@ -18,6 +17,9 @@ pub(crate) struct PartitionEntry {
     value_len: usize
 }
 
+/// A partition that doesn't hold its own key yet.
+/// 
+/// Used to prevent `FileHandle` creation while holding a reference to a partition slab entry
 pub(crate) struct PendingPartition {
     insertion_time: u64,
     file: FileHandle,
@@ -25,7 +27,7 @@ pub(crate) struct PendingPartition {
 }
 
 impl PendingPartition {
-    pub async fn new<RT: SendRuntime>(now: u64, path: PathBuf) -> Result<Self> {
+    pub async fn new<RT: Runtime>(now: u64, path: PathBuf) -> Result<Self> {
         Ok(Self {
             insertion_time: now,
             file: FileHandle::new::<RT>(path).await?,
@@ -44,11 +46,11 @@ impl PendingPartition {
     /// Inserts this pending partition into the given slab of partitions.
     /// 
     /// Returns the key of the inserted partition, or `None` if the slab is full.
-    pub fn insert_into(self, partitions: &Slab<Partition>) -> Option<usize> {
-        let vacent = partitions.vacant_entry()?;
+    pub fn insert_into(self, partitions: &Slab<Partition>) -> Result<usize> {
+        let vacent = partitions.vacant_entry().ok_or(Error::PARTITION_FAILED_INSERTION)?;
         let key = vacent.key();
         vacent.insert(self.construct(key));
-        Some(key)
+        Ok(key)
     }
     
     fn construct(self, key: usize) -> Partition {
@@ -69,8 +71,11 @@ pub(crate) struct Partition {
 }
 
 impl Partition {
+    /// Inserts a key-value pair into this partition, returning a future that resolves to the entry position.
+    /// Keys are inserted into the partition's queue without being polled.
     #[allow(clippy::cast_possible_truncation)]
-    pub fn insert<RT: SendRuntime>(&self, entry_key: SizedBytes, entry_value: Bytes) -> impl Future<Output = Result<PartitionEntry>> + use<RT> {
+    #[must_use = "This future has side effects before being polled!"]
+    pub fn insert<RT: Runtime>(&self, entry_key: SizedBytes, entry_value: Bytes) -> impl Future<Output = Result<PartitionEntry>> + use<RT> {
         let key_len = entry_key.len() as u64;
         let value_len = entry_value.len() as u64;
         
@@ -112,7 +117,8 @@ impl Partition {
     /// This removes all keys from this partition that are shared by the entries dashmap
     /// After removing these keys, it returns a future to a pending file deletion.
     /// This will delete keys immedietly without being polled and on poll will delete the file.
-    pub fn purge<RT: SendRuntime>(&self, entries: &HashMap<SizedBytes, CacheEntry, RapidHash>) -> impl Future<Output = Result<()>> + use<RT> {
+    #[must_use = "This future has side effects before being polled!"]
+    pub fn purge<RT: Runtime>(&self, entries: &HashMap<SizedBytes, CacheEntry, RapidHash>) -> impl Future<Output = Result<()>> + use<RT> {
         let guard = entries.guard();
         while let Some(key) = self.keys.pop() {
             let _ = entries.remove_if(&key, |_, v| v.par_key() == self.key, &guard);
@@ -120,11 +126,11 @@ impl Partition {
         self.file.delete::<RT>()
     }
 
-    pub fn read<RT: SendRuntime>(&self, position: PartitionEntry) -> impl Future<Output = Result<Bytes>> + use<RT> {
+    pub fn read<RT: Runtime>(&self, position: PartitionEntry) -> impl Future<Output = Result<Bytes>> + use<RT> {
         self.file.read_to::<RT>(position.position, BytesMut::zeroed(position.value_len)).map_ok(BytesMut::freeze)
     }
 
-    pub fn append_from<RT: SendRuntime, B: Buf + Send + Sync + 'static>(&self, buf: B) -> impl Future<Output = Result<u64>> + use<RT, B> {
+    pub fn append_from<RT: Runtime, B: Buf + Send + Sync + 'static>(&self, buf: B) -> impl Future<Output = Result<u64>> + use<RT, B> {
         self.file.append_from::<RT, _>(buf)
     }
     

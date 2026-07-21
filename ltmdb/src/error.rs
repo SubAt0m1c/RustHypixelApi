@@ -18,12 +18,12 @@ pub enum ErrorContent {
 
 #[derive(Debug)]
 pub enum ErrorKind {
-    IoError,
-    TaskError,
-    PartitionError,
+    Io,
+    Task,
+    Partition,
     PartitionNotFound,
-    BucketError,
-    QueueError,
+    Bucket,
+    Queue,
     Other(&'static str)
 }
 
@@ -37,9 +37,9 @@ impl Display for ErrorKind {
 }
 
 impl Error {
-    pub const BUCKET_NOT_FOUND: Self = Self { kind: ErrorKind::BucketError, error: ErrorContent::Simple("Bucket Not Found!") };
+    pub const BUCKET_NOT_FOUND: Self = Self { kind: ErrorKind::Bucket, error: ErrorContent::Simple("Bucket Not Found!") };
     pub const PARTITION_NOT_FOUND: Self = Self::partition_not_found("Removed before access!");
-    pub const PARTITION_FAILED_INSERTION: Self = Self::simple(ErrorKind::PartitionError, "Failed to insert partition!");
+    pub const PARTITION_FAILED_INSERTION: Self = Self::simple(ErrorKind::Partition, "Failed to insert partition!");
     
     pub fn err(kind: ErrorKind, err: impl StdError + Send + Sync + 'static) -> Self {
         Self {
@@ -58,11 +58,11 @@ impl Error {
     }
 
     pub fn io(err: io::Error) -> Self {
-        Self::err(ErrorKind::IoError, err)
+        Self::err(ErrorKind::Io, err)
     }
 
     pub fn queue(err: impl StdError + Send + Sync + 'static) -> Self {
-        Self::err(ErrorKind::QueueError, err)
+        Self::err(ErrorKind::Queue, err)
     }
 }
 
@@ -91,7 +91,7 @@ pub trait ResultExt {
     fn task_err<R, E: StdError + Send + Sync + 'static>(self) -> impl Future<Output = StdResult<R, Error>>
     where Self: Future<Output = StdResult<R, E>> + Sized
     {
-        self.map_err(|e| Error::err(ErrorKind::TaskError, e))
+        self.map_err(|e| Error::err(ErrorKind::Task, e))
     }
 
     /// flattens a future returning a `Result<Result<_, E: Into<Error>>, Error>` to a future returning `Result<_, Error>`
