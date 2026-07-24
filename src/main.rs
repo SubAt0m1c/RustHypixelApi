@@ -5,7 +5,7 @@ use actix_web::{App, HttpServer, middleware::from_fn, web::Data};
 use mimalloc::MiMalloc;
 use tokio::sync::OnceCell;
 
-use crate::{cache::cache_router::CacheRouter, key_extractor::RealKeyExtractor, routes::{profile::profile, secrets::secrets}};
+use crate::{cache::cache_router::CacheRouter, key_extractor::RealKeyExtractor, routes::{profile::profile, secrets::secrets, stats::{self, RateLimit, statistics}}};
 
 mod cache;
 mod key_extractor;
@@ -36,15 +36,18 @@ async fn main() -> std::io::Result<()> {
         .finish()
         .unwrap();
 
+    let stats = Data::new(RateLimit::new());
     let cache = Data::new(CacheRouter::load().await.unwrap());
 
     HttpServer::new(move || {
         App::new()
+            .app_data(stats.clone())
             .app_data(cache.clone())
             .wrap(Governor::new(&rate_limit))
             .wrap(from_fn(timer::timer))
             .service(secrets)
             .service(profile)
+            .service(statistics)
     })
     .bind((ip_addr, 8000))?
     .run()

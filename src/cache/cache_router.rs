@@ -2,7 +2,7 @@ use actix_web::web::Bytes;
 use ltmdb::{Database, ResultExt, Runtime};
 use tokio::{spawn, task::spawn_blocking, time::Instant};
 
-use crate::{cache::{cache_key::CacheKey, memory::{CacheEntry, MemoryCache}}, error::ProcessError, logging::{LogMessage, log}};
+use crate::{cache::{cache_key::CacheKey, memory::{CacheEntry, MemoryCache}}, error::ProcessError, logging::{LogMessage, log}, routes::stats::RateLimit};
 
 /// Routes cache requests to the memory cache and db cache.
 /// behavior during insertion is handled via the `CacheKey` trait.
@@ -20,8 +20,8 @@ impl CacheRouter {
     }
 
     /// Attempts to get the cache entry from the cache or fetches an entry into the cache if there is none.
-    pub async fn get<K: CacheKey>(&self, key: K) -> Result<Bytes, ProcessError> {
-        self.cache.try_get_with(key.key(), key.get_or_insert(&self.database)).await.map(CacheEntry::into_bytes)
+    pub async fn get<K: CacheKey>(&self, key: K, rate_limit: &RateLimit) -> Result<Bytes, ProcessError> {
+        self.cache.try_get_with(key.key(), key.get_or_insert(&self.database, rate_limit)).await.map(CacheEntry::into_bytes)
     }
 }
 

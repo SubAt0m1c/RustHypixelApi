@@ -21,6 +21,7 @@ mimalloc = "0.1.52"
 serde = "1.0.228"
 tokio =  { version = "1.52.3", features = ["macros", "sync"] }
 ltmdb = { path = "ltmdb" }
+portable-atomic = "1.13.1"
 
 [profile.dev.package."*"]
 opt-level = 3

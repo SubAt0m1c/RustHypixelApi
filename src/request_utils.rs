@@ -3,6 +3,7 @@ use std::sync::LazyLock;
 use actix_web::http::header::ContentType;
 use actix_web::web::Bytes;
 use actix_web::{mime, HttpResponse};
+use reqwest::Response;
 use reqwest::{header:: HeaderMap, Client};
 use tokio::time::Instant;
 
@@ -23,11 +24,11 @@ static CLIENT: LazyLock<Client> = LazyLock::new(|| {
         .unwrap()
 });
 
-pub async fn request(key: UuidKey, url: String) -> Result<Bytes, ProcessError> {
+pub async fn request(key: UuidKey, url: String) -> Result<Response, ProcessError> {
     let now = Instant::now();
     let res = CLIENT.get(url).send().await?;
     log(LogMessage::ElapsedUserStatus { key, elapsed: now.elapsed(), message: "Upstream hit", code: res.status().as_u16() });
-    res.error_for_status()?.bytes().await.map_err(ProcessError::from)
+    res.error_for_status().map_err(Into::into)
 }
 
 pub fn json_response(data: Bytes) -> HttpResponse {

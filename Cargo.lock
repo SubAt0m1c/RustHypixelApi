@@ -1073,6 +1073,7 @@ dependencies = [
  "lz4_flex",
  "mimalloc",
  "moka",
+ "portable-atomic",
  "reqwest",
  "serde",
  "serde_json",
