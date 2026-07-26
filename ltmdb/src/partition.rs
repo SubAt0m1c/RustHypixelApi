@@ -6,7 +6,7 @@ use futures_util::TryFutureExt;
 use papaya::HashMap;
 use sharded_slab::Slab;
 
-use crate::{Error, Result, db::CacheEntry, file_handle::{FileHandle, open_file}, hasher::RapidHash, runtime::Runtime, sized_bytes::SizedBytes};
+use crate::{Error, Result, db::{CacheEntry, Entry, ViableHasher}, file_handle::{FileHandle, open_file}, runtime::Runtime, sized_bytes::SizedBytes};
 
 const KEY_LEN_SIZE: usize = size_of::<u64>();
 const VALUE_LEN_SIZE: usize = size_of::<u64>();
@@ -75,9 +75,11 @@ impl Partition {
     /// Keys are inserted into the partition's queue without being polled.
     #[allow(clippy::cast_possible_truncation)]
     #[must_use = "This future has side effects before being polled!"]
-    pub fn insert<RT: Runtime>(&self, entry_key: SizedBytes, entry_value: Bytes) -> impl Future<Output = Result<PartitionEntry>> + use<RT> {
-        let key_len = entry_key.len() as u64;
-        let value_len = entry_value.len() as u64;
+    pub fn insert<RT: Runtime>(&self, entry: Entry) -> impl Future<Output = Result<PartitionEntry>> + Send + use<RT> {
+        let key_len = entry.key.len() as u64;
+        let value_len = entry.value.len() as u64;
+
+        let entry_key = entry.key.clone();
         
         let buf;
         #[cfg(unix)]
@@ -86,20 +88,20 @@ impl Partition {
             let value_len_buf = SizedBytes::from(value_len.to_be_bytes());
     
             // Chaining here avoids the allocation/move of a large key and/or value required to put them in one buffer, but this only helps when we have pwritev support.
-            buf = Buf::chain(key_len_buf, entry_key.clone())
+            buf = Buf::chain(key_len_buf, entry.key)
                 .chain(value_len_buf)
-                .chain(entry_value);
+                .chain(entry.value);
         }
         
         #[cfg(not(unix))]
         {
             use bytes::BufMut;
 
-            let mut buffer = BytesMut::with_capacity(KEY_LEN_SIZE + entry_key.len() + VALUE_LEN_SIZE + entry_value.len());
+            let mut buffer = BytesMut::with_capacity(KEY_LEN_SIZE + entry.key.len() + VALUE_LEN_SIZE + entry.value.len());
             buffer.put_u64(key_len);
-            buffer.put_slice(&entry_key);
+            buffer.put_slice(&entry.key);
             buffer.put_u64(value_len);
-            buffer.put(entry_value);
+            buffer.put(entry.value);
 
             // writing a whole vector at once reduces syscalls; a chain would require each chunk to be written individually.
             buf = buffer.freeze();
@@ -118,7 +120,7 @@ impl Partition {
     /// After removing these keys, it returns a future to a pending file deletion.
     /// This will delete keys immedietly without being polled and on poll will delete the file.
     #[must_use = "This future has side effects before being polled!"]
-    pub fn purge<RT: Runtime>(&self, entries: &HashMap<SizedBytes, CacheEntry, RapidHash>) -> impl Future<Output = Result<()>> + use<RT> {
+    pub fn purge<RT: Runtime, S: ViableHasher>(&self, entries: &HashMap<SizedBytes, CacheEntry, S>) -> impl Future<Output = Result<()>> + use<RT, S> {
         let guard = entries.guard();
         while let Some(key) = self.keys.pop() {
             let _ = entries.remove_if(&key, |_, v| v.par_key() == self.key, &guard);

@@ -1,10 +1,9 @@
 use std::{str::FromStr, sync::{LazyLock, atomic::Ordering}, time::{Duration, Instant}};
 
 use actix_web::{error::ErrorInternalServerError, get, web::{Data, Path}, Responder};
-use ltmdb::{Database, Runtime};
 use uuid::Uuid;
 
-use crate::{cache::{cache_key::CacheKey, cache_router::CacheRouter, compression::{compress, decompress}, memory::CacheEntry}, env_var, error::ProcessError, logging::{LogMessage, log}, request_utils::{json_response, request}, routes::stats::{RateLimit, stats_from_headers}};
+use crate::{cache::{cache_key::CacheKey, cache_router::{CacheRouter, Database}, compression::{compress, decompress}, memory::CacheEntry}, env_var, error::ProcessError, logging::{LogMessage, log}, request_utils::{json_response, request}, routes::stats::{RateLimit, stats_from_headers}};
 
 /// Database time to live for profile queries in seconds.
 pub static PROFILE_DB_TTL_SECONDS: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs(env_var("PROFILE_DB_TTL_SECONDS", 3600)));
@@ -20,7 +19,7 @@ impl CacheKey for ProfileKey {
         self.0
     }
  
-    async fn get_or_insert<RT: Runtime + Send + Sync + 'static>(&self, db: &Database<RT>, stats: &RateLimit) -> Result<CacheEntry, ProcessError> {
+    async fn get_or_insert(&self, db: &Database, stats: &RateLimit) -> Result<CacheEntry, ProcessError> {
         let uuid_key = self.key();
         let now = Instant::now();
         let bytes = db.read(uuid_key).await?;
@@ -32,7 +31,6 @@ impl CacheKey for ProfileKey {
             log(LogMessage::MessageAndUser { key: uuid_key, message: "DB Hit" });
             return Ok(CacheEntry::from_vec(decompressed, *PROFILE_CACHE_TTL_SECONDS))
         }
-
 
         let res = request(uuid_key, format!("https://api.hypixel.net/v2/skyblock/profiles?uuid={}", self.uuid())).await?;
         if let Some((remaining, reset)) = stats_from_headers(res.headers()) {

@@ -13,7 +13,6 @@
 
 use std::{result::Result as StdResult, time::{Duration, SystemTime, UNIX_EPOCH}};
 
-mod hasher;
 mod error;
 mod expiration_queue;
 mod file_handle;

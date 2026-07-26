@@ -1,3 +1,5 @@
+#![allow(dead_code, unused)]
+
 use std::{collections::HashMap, time::Duration};
 
 use actix_web::{HttpResponse, Responder, error::ErrorInternalServerError, post, web::{Bytes, Data}};

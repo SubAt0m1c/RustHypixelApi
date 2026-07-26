@@ -234,6 +234,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "arc-swap"
+version = "1.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c049c0be4daef0b145cb3555416b3b8ef5b7888a38aea1a3a155801fe7b0810b"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "async-lock"
 version = "3.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -636,11 +645,11 @@ dependencies = [
 
 [[package]]
 name = "fastrand"
-version = "2.4.1"
+version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
+checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 dependencies = [
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
 ]
 
 [[package]]
@@ -1074,10 +1083,12 @@ dependencies = [
  "mimalloc",
  "moka",
  "portable-atomic",
+ "rapidhash_lite",
  "reqwest",
  "serde",
  "serde_json",
  "simd-json",
+ "single_flight",
  "tokio",
  "uuid",
 ]
@@ -1361,7 +1372,6 @@ dependencies = [
  "bytes",
  "crossbeam-queue",
  "flume",
- "futures-timer",
  "futures-util",
  "nix",
  "papaya",
@@ -1726,6 +1736,10 @@ checksum = "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a"
 dependencies = [
  "rand_core 0.10.1",
 ]
+
+[[package]]
+name = "rapidhash_lite"
+version = "0.1.0"
 
 [[package]]
 name = "raw-cpuid"
@@ -2145,6 +2159,17 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "single_flight"
+version = "0.0.1"
+dependencies = [
+ "arc-swap",
+ "event-listener",
+ "fastrand",
+ "papaya",
+ "pin-project-lite",
+]
 
 [[package]]
 name = "slab"

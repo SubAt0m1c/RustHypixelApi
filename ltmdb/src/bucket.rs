@@ -1,14 +1,11 @@
 use std::{fs, path::PathBuf, sync::atomic::{AtomicBool, Ordering}, time::Duration};
 
-use bytes::Bytes;
 use flume::Sender;
 use futures_util::future::{Either, ok};
-use papaya::HashMap;
 use portable_atomic::AtomicU128;
 use sharded_slab::Slab;
 
-use crate::{Result, db::CacheEntry, defer::{Deferred, defer}, error::Error, expiration_queue::ExpCMD, hasher::RapidHash, partition::{Partition, PendingPartition}, runtime::Runtime, sized_bytes::SizedBytes, unix_secs};
-
+use crate::{Result, db::{CacheEntry, Entry, Maps, ViableHasher}, defer::{Deferred, defer}, error::Error, expiration_queue::ExpCMD, partition::{Partition, PendingPartition}, runtime::Runtime}; 
 const BUCKET_WINDOW: Duration = Duration::from_mins(1);
 
 /// State indicating the rotation guard is free to acquire.
@@ -41,26 +38,24 @@ impl Bucket {
     /// 
     /// requires `bucket_id` and `buckets` to be passed in so the future can reacquire the bucket
     /// when the future has internally finished awaiting.
-    pub fn insert<'a, RT: Runtime>(
+    pub fn insert<'a, RT: Runtime, S: ViableHasher>(
         &self, 
+        now: u64,
         bucket_id: u64,
-        buckets: &'a HashMap<u64, Bucket, RapidHash>, 
-        entry_key: SizedBytes, 
-        entry_value: Bytes, 
-        partition_map: &'a Slab<Partition>,     
-        exp_tx: &'a Sender<ExpCMD>
-    ) -> impl Future<Output = Result<CacheEntry>> + use<'a, RT> {
-        let now = unix_secs();
+        entry: Entry, 
+        maps: &'a Maps<S>,
+        exp_tx: &'a Sender<ExpCMD>,
+    ) -> impl Future<Output = Result<CacheEntry>> + Send + use<'a, RT, S> {
         let rotation_future = match self.needs_rotate(now) {
             Ok(path) => Either::Left(async move { // this needs to be a future so the new partition creation can be awaited.
                 // ensures the guard will be released if the future is dropped or function returns early.
-                let drop_guard = defer(|| buckets.pin().get(&bucket_id).map(Bucket::rel_rotate));
-
-                let partition = PendingPartition::new::<RT>(now, path).await?;
-                let new_key = partition.insert_into(partition_map)?;
+                let drop_guard = defer(|| maps.buckets.pin().get(&bucket_id).map(Bucket::rel_rotate));                
                 
-                let bucket_guard = buckets.guard();
-                let bucket = buckets.get(&bucket_id, &bucket_guard).ok_or(Error::BUCKET_NOT_FOUND)?;
+                let partition = PendingPartition::new::<RT>(now, path).await?;
+                let new_key = partition.insert_into(&maps.partitions)?;
+                
+                let bucket_guard = maps.buckets.guard();
+                let bucket = maps.buckets.get(&bucket_id, &bucket_guard).ok_or(Error::BUCKET_NOT_FOUND)?;
                 exp_tx.send(ExpCMD::Schedule { time: now + bucket.ttl.as_secs(), par_key: new_key }).map_err(Error::queue)?;
                 bucket.live_partition.store(new_key, now, Ordering::Relaxed);
                 
@@ -75,9 +70,10 @@ impl Bucket {
         async move {
             let par_key = rotation_future.await?;
 
-            let partition = partition_map.get(par_key).ok_or(Error::PARTITION_NOT_FOUND)?;
-            let insert_future = partition.insert::<RT>(entry_key, entry_value);
-            drop(partition); // drop the partition so we don't prevent its reclamation during the coming .await
+            let insert_future = {
+                let partition = maps.partitions.get(par_key).ok_or(Error::PARTITION_NOT_FOUND)?;
+                partition.insert::<RT>(entry)
+            };  // drop the partition so we don't prevent its reclamation during the coming .await
             
             let position = insert_future.await?;
             Ok::<_, Error>(CacheEntry::new(par_key, position))

@@ -1,9 +1,10 @@
-use std::{sync::{Arc, LazyLock}, time::{Duration, Instant}};
+use std::{ops::Deref, sync::{Arc, LazyLock}, time::{Duration, Instant}};
 
 use actix_web::web::Bytes;
 use moka::{Expiry, future::Cache, notification::RemovalCause};
+use rapidhash_lite::RandomHash;
 
-use crate::{cache::UuidKey, env_var, error::ProcessError, logging::{LogMessage, log}};
+use crate::{cache::UuidKey, env_var, logging::{LogMessage, log}};
 
 /// Maximum size for the cache in megabytes.
 static CACHE_SIZE_MB: LazyLock<u64> = LazyLock::new(|| env_var("CACHE_SIZE_MB", 384));
@@ -33,8 +34,8 @@ impl CacheEntry {
 }
 
 /// Thin wrapper around a Moka Cache with keys and entries already defined.
-#[derive(Clone)]
-pub struct MemoryCache(Cache<UuidKey, CacheEntry>);
+#[derive(Clone)] 
+pub struct MemoryCache(Cache<UuidKey, CacheEntry, RandomHash>);
 
 impl MemoryCache {
     pub fn new() -> Self {
@@ -47,13 +48,17 @@ impl MemoryCache {
                     log(LogMessage::MessageAndUser { key: Arc::unwrap_or_clone(key), message: "Entry removed due to size constraints." });
                 }
             })
-            .build();
+            .build_with_hasher(RandomHash::default());
 
         Self(cache)
     }
+}
 
-    pub async fn try_get_with<F: Future<Output=Result<CacheEntry, ProcessError>>>(&self, key: UuidKey, init: F) -> Result<CacheEntry, ProcessError> {
-        self.0.try_get_with(key, init).await.map_err(Arc::unwrap_or_clone)
+impl Deref for MemoryCache {
+    type Target = Cache<UuidKey, CacheEntry, RandomHash>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 

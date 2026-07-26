@@ -1,12 +1,26 @@
-use std::{fs, marker::PhantomData, path::{Path, PathBuf}, sync::Arc, time::Duration};
+use std::{fs, hash::{BuildHasher, RandomState}, marker::PhantomData, path::{Path, PathBuf}, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use flume::Sender;
-use futures_util::{StreamExt, future::{Either, err}, stream::FuturesUnordered};
+use futures_util::{StreamExt, stream::FuturesUnordered};
 use papaya::{HashMap, Operation};
 use sharded_slab::Slab;
 
-use crate::{Result, bucket::{ActivePartition, Bucket}, error::Error, expiration_queue::{ExpCMD, run_expiration_task}, hasher::RapidHash, partition::{Partition, PartitionEntry}, runtime::Runtime, sized_bytes::SizedBytes, unix_secs};
+use crate::{Result, bucket::{ActivePartition, Bucket}, error::Error, expiration_queue::{ExpCMD, run_expiration_task}, partition::{Partition, PartitionEntry}, runtime::Runtime, sized_bytes::SizedBytes, unix_secs};
+
+pub(crate) trait ViableHasher: BuildHasher + Default + Send + Sync + 'static {}
+impl<T: BuildHasher + Default + Send + Sync + 'static> ViableHasher for T {}
+
+pub(crate) struct Entry {
+    pub key: SizedBytes,
+    pub value: Bytes,
+}
+
+impl Entry {
+    pub fn new(key: impl Into<SizedBytes>, value: impl Into<Bytes>) -> Self {
+        Self { key: key.into(), value: value.into() }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct CacheEntry {
@@ -34,32 +48,39 @@ impl CacheEntry {
 /// Data is synced according to the os.
 /// Recently written values must not be assumed to persist on crashes.
 #[derive(Clone)]
-pub struct Database<RT: Runtime> {
-    inner: Arc<DbInner<RT>>,
+pub struct Database<RT: Runtime, S: BuildHasher + Default + Send + Sync + 'static = RandomState> {
+    maps: Arc<Maps<S>>,
     queue_tx: Sender<ExpCMD>,
-}
-
-pub(crate) struct DbInner<RT: Runtime> {
-    partitions: Slab<Partition>,
-    entries: HashMap<SizedBytes, CacheEntry, RapidHash>,
-    buckets: HashMap<u64, Bucket, RapidHash>,
     path: PathBuf,
     _phantom: PhantomData<RT>
 }
 
-impl<RT: Runtime> DbInner<RT> {
-    pub(super) fn new(path: impl Into<PathBuf>) -> Self {
+pub(crate) struct Maps<S: ViableHasher = RandomState> {
+    pub partitions: Slab<Partition>,
+    pub entries: HashMap<SizedBytes, CacheEntry, S>,
+    pub buckets: HashMap<u64, Bucket, S>,
+}
+
+impl<S: ViableHasher> Maps<S> {
+    pub(crate) fn new() -> Self {
         Self {
-            buckets: HashMap::with_hasher(RapidHash::default()),
-            entries: HashMap::with_hasher(RapidHash::default()),
-            partitions: Slab::new(), // if max_capacity is too low, it will panic with `capacity overflow` on insert. 
-            path: path.into(),
-            _phantom: PhantomData
+            partitions: Slab::new(),
+            entries: HashMap::with_hasher(S::default()),
+            buckets: HashMap::with_hasher(S::default()),
         }
     }
 }
 
-impl<RT: Runtime> Database<RT> {
+impl<RT: Runtime, S: BuildHasher + Default + Send + Sync + 'static> Database<RT, S> {
+    fn new(maps: Arc<Maps<S>>, queue_tx: Sender<ExpCMD>, path: PathBuf) -> Self {
+        Self {
+            maps,
+            queue_tx,
+            path,
+            _phantom: PhantomData,
+        }
+    }
+    
     /// Loads a database from a directory.
     /// 
     /// # Errors
@@ -67,9 +88,10 @@ impl<RT: Runtime> Database<RT> {
     pub async fn load(path: impl AsRef<Path> + Send + Sync + 'static) -> Result<Self> {
         let (queue_tx, rx) = flume::unbounded::<ExpCMD>();
 
-        let inner: Arc<DbInner<RT>> = Arc::new(DbInner::new(path.as_ref()));
+        let path_buf = path.as_ref().to_path_buf();
+        let maps: Arc<Maps<S>> = Arc::new(Maps::<S>::new());
 
-        let inner_ref = &inner; // allows us to move the refs into the closures without moving the values themselves.
+        let inner_ref = &maps; // allows us to move the refs into the closures without moving the values themselves.
         let queue_tx_ref = &queue_tx;
         
         let mut bucket_futures = FuturesUnordered::new();
@@ -138,17 +160,17 @@ impl<RT: Runtime> Database<RT> {
         }
 
         drop(bucket_futures); // this drops the references to the inner and queue_tx
-        RT::spawn(run_expiration_task::<RT>(DbView::new(inner.clone()), rx));
-        Ok(Self { inner, queue_tx })
+        RT::spawn(run_expiration_task::<RT, S>(maps.clone(), rx));
+        Ok(Self::new(maps, queue_tx, path_buf))
     }
 
     /// Creates a new database without care for previous target directory contents.
     pub fn create_new(path: impl Into<PathBuf>) -> Self {
         let (queue_tx, rx) = flume::unbounded::<ExpCMD>();
-        let inner = Arc::new(DbInner::new(path));
+        let inner = Arc::new(Maps::new());
 
-        RT::spawn(run_expiration_task::<RT>(DbView::new(inner.clone()), rx));
-        Self { inner, queue_tx }
+        RT::spawn(run_expiration_task::<RT, S>(inner.clone(), rx));
+        Self::new(inner, queue_tx, path.into())
     }
 
     /// inserts a key value pair into the database with a given ttl.
@@ -158,36 +180,33 @@ impl<RT: Runtime> Database<RT> {
     /// 
     /// # Errors
     /// Returns an error if any io operations failed or a spawned task returns an error.
+    #[allow(clippy::used_underscore_items)]
     pub async fn insert(&self, key: impl Into<SizedBytes>, value: impl Into<Bytes>, ttl: Duration) -> Result<()> {
         let now = unix_secs();
         let cache_id = ttl.as_secs();
 
-        let mut guard = self.inner.buckets.guard();
-        #[allow(clippy::single_match_else)] // clippy is silly and the alternative is a let bucket = if let Some() {} else {}
-        let bucket = match self.inner.buckets.get(&cache_id, &guard) {
-            Some(bucket) => bucket,
-            None => {
-                drop(guard); // drop the guard for the upcoming .await
-                
-                let path = self.inner.path.join(ttl.as_millis().to_string());
-                let bucket = Bucket::new::<RT>(path, now, ttl, &self.inner.partitions, &self.queue_tx).await?;
-                
-                guard = self.inner.buckets.guard();
-                self.inner.buckets.get_or_insert(cache_id, bucket, &guard)
-            }
+        let entry = Entry::new(key, value);
+        let entry_key = entry.key.clone();
+        
+        let new_bucket = if self.maps.buckets.pin().contains_key(&cache_id) { None } else {
+            let path = self.path.join(ttl.as_millis().to_string());
+            Some(Bucket::new::<RT>(path, now, ttl, &self.maps.partitions, &self.queue_tx).await?)
         };
 
-        let entry_key = key.into();
-        let insert_future = self.insert_into(bucket, cache_id, entry_key.clone(), value.into());
-        drop(guard); // drop the guard for the upcoming .await
+        let insert_future = {
+            let guard = self.maps.buckets.guard();
+
+            let bucket = match new_bucket {
+                Some(bucket) => self.maps.buckets.get_or_insert(cache_id, bucket, &guard),
+                #[allow(clippy::missing_panics_doc)] // this panic should never occur unless we add bucket removal.
+                None => self.maps.buckets.get(&cache_id, &guard).expect("new_bucket should be Some if buckets doesnt contain cache_id"),
+            };
+            bucket.insert::<RT, S>(now, cache_id, entry, &self.maps, &self.queue_tx)
+        };
         
         let cache_entry = insert_future.await?;
-        self.inner.entries.pin().insert(entry_key, cache_entry);
+        self.maps.entries.pin().insert(entry_key, cache_entry);
         Ok(())
-    }
-
-    fn insert_into<'a>(&'a self, bucket: &Bucket, bucket_id: u64, entry_key: SizedBytes, entry_value: Bytes) -> impl Future<Output = Result<CacheEntry>> + use<'a, RT> {
-        bucket.insert::<RT>(bucket_id, &self.inner.buckets, entry_key, entry_value, &self.inner.partitions, &self.queue_tx)
     }
     
     /// Attempts to get a value from the database given a key.
@@ -195,44 +214,26 @@ impl<RT: Runtime> Database<RT> {
     /// 
     /// # Errors
     /// Returns an error if any io operations failed or a spawned task returns an error.
+    #[allow(clippy::used_underscore_items)]
     pub async fn read(&self, key: impl Into<SizedBytes>) -> Result<Option<Bytes>> {
         let entry_key = key.into();
 
-        let Some(CacheEntry { partition_key, position }) = self.inner.entries.pin().get(&entry_key).copied() else {
+        let Some(CacheEntry { partition_key, position }) = self.maps.entries.pin().get(&entry_key).copied() else {
             return Ok(None)
         };
 
-        let Some(partition) = self.inner.partitions.get(partition_key) else {
+        let Some(read_future) = self.maps.partitions.get(partition_key).map(|p| p.read::<RT>(position)) else {
             return Ok(None) // we can treat missing partitions like a cache miss
         };
-        
-        let read_future = partition.read::<RT>(position);
-        drop(partition);
 
         let read = read_future.await?;
         Ok(Some(read))
     }
 }
 
-/// View into the database. 
-/// Used so the expiration task doesnt get full access to the database
-/// when it only needs to purge partitions.
-pub(crate) struct DbView<RT: Runtime> {
-    inner: Arc<DbInner<RT>>
-}
-
-impl<RT: Runtime> DbView<RT> {
-    pub(crate) fn new(inner: Arc<DbInner<RT>>) -> Self {
-        Self { inner }
-    }
-
-    #[must_use = "This future has side effects before being polled!"]
-    pub(crate) fn purge_partition(&self, key: usize) -> impl Future<Output = Result<()>> + use<RT> {
-        let Some(partition) = self.inner.partitions.get(key) else {
-            return Either::Left(err(Error::PARTITION_NOT_FOUND)); // either because i want to return errors on the future itself
-        };
-
-        self.inner.partitions.remove(key); // sharded_slab has no problem letting us keep a reference while marking it to be deleted.
-        Either::Right(partition.purge::<RT>(&self.inner.entries))
-    }
+/// Asserts at compile-time that the database's read and insert methods are send safe.
+fn _assert_send<RT: Runtime, S: ViableHasher>(db: &Database<RT, S>, key: SizedBytes, value: Bytes) {
+    fn assert_send<T: Send>(_: T) { }
+    assert_send(db.insert(key.clone(), value, Duration::from_secs(20)));
+    assert_send(db.read(key));
 }

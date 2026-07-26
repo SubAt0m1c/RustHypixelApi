@@ -10,11 +10,6 @@ pub enum LogMessage {
         elapsed: Duration,
         name: &'static str,
     },
-    // ElapsedAndUser {
-    //     key: CacheKey,
-    //     elapsed: Duration,
-    //     message: &'static str,
-    // },
     ElapsedUserStatus {
         key: UuidKey,
         elapsed: Duration,
@@ -33,9 +28,6 @@ impl Display for LogMessage {
             Self::TimeElapsed { elapsed, name} => {
                 write!(f, "Time elapsed for {name}: {elapsed:?}")
             }
-            // Self::ElapsedAndUser { key, elapsed, message } => {
-            //     write!(f, "{}: {:?} ({:?})", message, key, elapsed)
-            // }
             Self::ElapsedUserStatus { key, elapsed, message, code } => {
                 write!(f, "{message}: {key} ({code}; {elapsed:?})")
             }

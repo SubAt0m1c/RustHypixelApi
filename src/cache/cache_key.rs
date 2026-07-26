@@ -1,9 +1,8 @@
-use ltmdb::{Database, Runtime};
 use uuid::Uuid;
 
-use crate::{cache::{UuidKey, memory::CacheEntry}, error::ProcessError, routes::stats::RateLimit};
+use crate::{cache::{UuidKey, cache_router::Database, memory::CacheEntry}, error::ProcessError, routes::stats::RateLimit};
 
-pub trait CacheKey {
+pub trait CacheKey: Send {
     /// flag for db storage/etc. 
     /// MUST be unique across implementations of `CacheKey`.
     /// can only store a max of 8 values rn
@@ -15,7 +14,7 @@ pub trait CacheKey {
     /// If this function returns `Ok()`, it will add the Bytes into the memory cache.
     /// Otherwise, no entry will be added to the memory cache and the error should be
     /// propegated upwards.
-    async fn get_or_insert<RT: Runtime + Send + Sync + 'static>(&self, db: &Database<RT>, stats: &RateLimit) -> Result<CacheEntry, ProcessError>;
+    fn get_or_insert(&self, db: &Database, stats: &RateLimit) -> impl Future<Output = Result<CacheEntry, ProcessError>> + Send;
     
     fn key(&self) -> UuidKey {
         UuidKey::encode(self.uuid(), Self::KEYFLAG)

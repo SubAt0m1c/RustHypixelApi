@@ -5,7 +5,7 @@ use actix_web::{App, HttpServer, middleware::from_fn, web::Data};
 use mimalloc::MiMalloc;
 use tokio::sync::OnceCell;
 
-use crate::{cache::cache_router::CacheRouter, key_extractor::RealKeyExtractor, routes::{profile::profile, secrets::secrets, stats::{self, RateLimit, statistics}}};
+use crate::{cache::cache_router::CacheRouter, key_extractor::RealKeyExtractor, routes::{profile::profile, secrets::secrets, stats::{RateLimit, statistics}}};
 
 mod cache;
 mod key_extractor;

@@ -137,6 +137,13 @@ impl<const N: usize> From<[u8; N]> for SizedBytes {
     }
 }
 
+impl From<Vec<u8>> for SizedBytes {
+    #[inline]
+    fn from(value: Vec<u8>) -> Self {
+        SizedBytes { inner: Inner::Bytes(Bytes::from(value)) }
+    }
+}
+
 impl From<Bytes> for SizedBytes {
     #[inline]    
     fn from(value: Bytes) -> Self {
