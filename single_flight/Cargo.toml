@@ -1,0 +1,11 @@
+[package]
+name = "single_flight"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+arc-swap = "1.9.2"
+event-listener = "5.4.1"
+fastrand = "2.5.0"
+papaya = "0.2.4"
+pin-project-lite = "0.2.17"
