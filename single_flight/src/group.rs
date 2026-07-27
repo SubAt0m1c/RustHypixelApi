@@ -1,10 +1,12 @@
 use std::{borrow::Borrow, fmt::{self, Debug}, hash::{BuildHasher, Hash, RandomState}, marker::PhantomData, pin::pin, sync::Arc};
 
+use concurrent_cell::Collector;
 use papaya::HashMap;
 
 use crate::{error::GroupWorkError, types::{Flight, FlightType, Leader, State}};
 
 pub struct Group<K, T, E, S = RandomState> {
+    collector: Arc<Collector>, // Collector for the ConcurrentCell's in the Flights.
     map: HashMap<K, Arc<Flight<T>>, S>,
     _marker: PhantomData<fn(E)>,
 }
@@ -23,6 +25,7 @@ where
 {
     fn default() -> Self {
         Self {
+            collector: Arc::new(Collector::default()),
             map: HashMap::<K, Arc<Flight<T>>, S>::default(),
             _marker: PhantomData,
         }
@@ -41,6 +44,7 @@ where
     #[must_use]
     pub fn with_hasher(hash_builder: S) -> Group<K, T, E, S> {
         Self {
+            collector: Arc::new(Collector::default()),
             map: HashMap::with_hasher(hash_builder),
             _marker: PhantomData,
         }
@@ -58,28 +62,31 @@ where
         Q: Hash + Eq + ?Sized + Send + Sync + ToOwned<Owned = K>,
         F: Future<Output = Result<T, E>> + Send,
         K: Borrow<Q>,
-    {
+    {   
         let handler = {
             let map = self.map.pin();
-            let flight = map.get_or_insert_with(key.to_owned(), || Arc::new(Flight::default()));
+            let flight = map.get_or_insert_with(key.to_owned(), || Arc::new(Flight::with_collector(self.collector.clone())));
             let expected = flight.state();
             match expected {
-                State::Uninit | State::LeaderDropped => {
-                    FlightType::try_lead(flight.clone(), expected)
-                }
+                State::Uninit | State::LeaderDropped => FlightType::try_lead(flight.clone(), expected),
                 State::Starting => FlightType::Follower(flight.clone()),
                 State::LeaderFailed => {
                     if is_retry {
                         return Err(GroupWorkError::LeaderFailed);
                     }
-                    
+    
                     FlightType::try_lead(flight.clone(), expected)
                 }
                 State::Success => {
+                    // Slow retries would trigger a new flight if we let them lead here.
+                    // 
+                    // We could make leaders unconditionally remove the flight from the map and never worry about stale entries,
+                    // but that would make slow retries trigger a new flight.
                     if is_retry {
-                        return Ok(Arc::unwrap_or_clone(flight.value()));
+                        return Ok(flight.value_cloned().expect("State should be `Success`"))
                     }
-                    
+
+                    // if this is a completely new worker, we can let them take over if this is stale.
                     FlightType::try_lead(flight.clone(), expected)
                 }
             }
@@ -88,14 +95,16 @@ where
             FlightType::Leader(flight) => {
                 let leader = Leader::new(
                     fut.take().expect("Future should be available as leader"),
-                    flight,
+                    flight.clone(),
                 );
                 
                 let result = leader.await;
-                if !is_retry {
-                    self.map.pin().remove(key);
-                }
 
+                if !is_retry {
+                    // Atomic remove in case another thread starts a new flight since we set it to success.
+                    let _ = self.map.pin().remove_if(key, |_, existing| Arc::ptr_eq(existing, &flight));
+                }
+                
                 result.map_err(GroupWorkError::Error)
             }
             FlightType::Follower(flight) => {
@@ -106,16 +115,18 @@ where
                         State::Starting | State::Uninit => notified.await,
                         State::LeaderDropped => return Err(GroupWorkError::LeaderDropped),
                         State::LeaderFailed => return Err(GroupWorkError::LeaderFailed),
-                        State::Success => return Ok(Arc::unwrap_or_clone(flight.value())),
+                        State::Success => return Ok(flight.value_cloned().expect("State should be `Success`")),
                     }
                 }
             }
         }
     }
+    
 
     /// Executes the given function while ensuring only one is "in flight" at any given time.
     /// 
-    /// Duplicate calls wait for the original call to complete and return the same value.
+    /// Duplicate calls wait for the original call to complete and return the same value by cloning it.
+    /// If the returned value is expensive, wrap it in an [`Arc`].
     /// 
     /// # Errors
     /// 
@@ -139,5 +150,18 @@ where
                 Err(GroupWorkError::LeaderFailed) => return Err(None),
             }
         }
+    }
+
+    /// Removes entries left after a leader has dropped.
+    /// 
+    /// Dropped leaders will not remove their entries from the map,
+    /// and this method will remove those stale entries.
+    /// 
+    /// If called while a follower is recovering a leader, late arriving
+    /// retries may end up rerunning the work function.
+    pub fn purge_stale(&self) {
+        self.map.pin().retain(|_, flight| {
+            matches!(flight.state(), State::Starting | State::Uninit)
+        });
     }
 }

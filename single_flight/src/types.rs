@@ -1,5 +1,5 @@
 use std::{pin::Pin, sync::{Arc, atomic::{AtomicU8, Ordering}}, task::{Context, Poll}};
-use arc_swap::{ArcSwapOption};
+use concurrent_cell::{Collector, ConcurrentCell};
 use event_listener::{Event, EventListener};
 use pin_project_lite::pin_project;
 
@@ -21,11 +21,19 @@ impl<T> FlightType<T> {
 
 pub(crate) struct Flight<T> {
     state: AtomicU8,
-    result: ArcSwapOption<T>,
+    result: ConcurrentCell<Option<T>>,
     notify: BigNotify,
 }
 
 impl<T> Flight<T> {
+    pub fn with_collector(collector: Arc<Collector>) -> Self {
+        Self {
+            state: AtomicU8::new(State::Uninit as u8),
+            result: ConcurrentCell::with_collector(None, collector),
+            notify: BigNotify::new(),
+        }
+    }
+    
     pub fn try_acquire(&self, expected: State) -> bool {
         self.state.compare_exchange(expected as u8, State::Starting as u8, Ordering::Release, Ordering::Acquire).is_ok()
     }
@@ -33,22 +41,13 @@ impl<T> Flight<T> {
     pub fn state(&self) -> State {
         State::try_from(self.state.load(Ordering::Acquire)).expect("State should never be invalid.")
     }
-
-    /// Attempts to get the value stored in a successful flight
-    /// 
-    /// This will return stale values if the state has been updated.
-    /// # Panics
-    /// Panics if the state has not yet been set to `State::Success`.
-    pub fn value(&self) -> Arc<T> {
-        self.result.load_full().expect("Value should never be accessed outside State::Success")
-    }
     
     fn update(&self, update: Update<T>) {
         match update {
             Update::LeaderDropped => self.state.store(State::LeaderDropped as u8, Ordering::Release),
             Update::LeaderFailed => self.state.store(State::LeaderFailed as u8, Ordering::Release),
-            Update::Success(arc) => {
-                self.result.store(Some(arc));
+            Update::Success(value) => {
+                self.result.set(Some(value));
                 self.state.store(State::Success as u8, Ordering::Release);
             }
         }
@@ -71,10 +70,16 @@ impl<T> Flight<T> {
     }
 }
 
+impl<T: Clone> Flight<T> {
+    pub fn value_cloned(&self) -> Option<T> {
+        self.result.pin().get().clone()
+    }
+}
+
 pub enum Update<T> {
     LeaderDropped,
     LeaderFailed,
-    Success(Arc<T>),
+    Success(T),
 }
 
 #[repr(u8)]
@@ -97,17 +102,6 @@ impl TryFrom<u8> for State {
             3 => Ok(Self::LeaderFailed),
             4 => Ok(Self::Success),
             _ => Err(()),
-        }
-    }
-}
-
-
-impl<T> Default for Flight<T> {
-    fn default() -> Self {
-        Self {
-            state: AtomicU8::new(State::Uninit as u8),
-            result: ArcSwapOption::const_empty(),
-            notify: BigNotify::new(),
         }
     }
 }
@@ -164,7 +158,7 @@ where
         let result = this.fut.poll(cx);
         if let Poll::Ready(val) = &result {
             match val {
-                Ok(v) => this.flight.update(Update::Success(Arc::from(v.clone()))), // arc::from instead of new so if the user used an arced value it will just reuse it
+                Ok(v) => this.flight.update(Update::Success(v.clone())),
                 Err(_) => this.flight.update(Update::LeaderFailed),
             }
         }
@@ -184,7 +178,7 @@ where
         let this = self.project();
         let result = this.fut.poll(cx);
         if let Poll::Ready(val) = &result {
-            this.flight.update(Update::Success(Arc::from(val.clone())));
+            this.flight.update(Update::Success(val.clone()));
         }
         result
     }
