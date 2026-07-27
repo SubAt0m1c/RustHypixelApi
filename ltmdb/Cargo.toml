@@ -11,6 +11,7 @@ futures-util = { version = "0.3.32", default-features = false, features = ["allo
 papaya = "0.2.4"
 portable-atomic = "1.13.1"
 sharded-slab = "0.1.7"
+simple_defer = { path = "../simple_defer" }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31.3", features = ["uio"]}

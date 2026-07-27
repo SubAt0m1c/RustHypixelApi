@@ -3,7 +3,8 @@ members = [
     "ltmdb",
     "single_flight",
     "rapidhash_lite",
-    "concurrent_cell"
+    "concurrent_cell",
+    "simple_defer",
 ]
 
 [package]

@@ -4,8 +4,9 @@ use flume::Sender;
 use futures_util::future::{Either, ok};
 use portable_atomic::AtomicU128;
 use sharded_slab::Slab;
+use simple_defer::{Deferred as _, defer};
 
-use crate::{Result, db::{CacheEntry, Entry, Maps, ViableHasher}, defer::{Deferred, defer}, error::Error, expiration_queue::ExpCMD, partition::{Partition, PendingPartition}, runtime::Runtime}; 
+use crate::{Result, db::{CacheEntry, Entry, Maps, ViableHasher}, error::Error, expiration_queue::ExpCMD, partition::{Partition, PendingPartition}, runtime::Runtime}; 
 const BUCKET_WINDOW: Duration = Duration::from_mins(1);
 
 /// State indicating the rotation guard is free to acquire.
@@ -50,7 +51,7 @@ impl Bucket {
             Ok(path) => Either::Left(async move { // this needs to be a future so the new partition creation can be awaited.
                 // ensures the guard will be released if the future is dropped or function returns early.
                 let drop_guard = defer(|| maps.buckets.pin().get(&bucket_id).map(Bucket::rel_rotate));                
-                
+
                 let partition = PendingPartition::new::<RT>(now, path).await?;
                 let new_key = partition.insert_into(&maps.partitions)?;
                 
