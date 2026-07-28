@@ -172,12 +172,11 @@ where
                         // this guard is so that dropped leaders without any followers will remove their entry from the map
                         // if it has followers, a follower can pick up the task.
                         let drop_guard = defer(||  {
-                            let acquired_close_guard = leading_flight.close();
-                            
-                            let _ = self.map.pin().remove_if(key, |_, this| {
-                                Arc::ptr_eq(this, leading_flight) && acquired_close_guard
-                            });
+                            if leading_flight.close() {
+                                let _ = self.map.pin().remove_if(key, |_, this| Arc::ptr_eq(this, leading_flight));
+                            }
                         });
+                        
                         let result = leader.await;
                         
                         // the leader can always remove it from the map. Old retries will still hold their own existing flight reference.
