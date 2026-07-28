@@ -151,7 +151,7 @@ where
                 match flight_type {
                     FlightType::Follower(follower_flight) => {
                         loop {
-                            let notified = pin!(follower_flight.wait());
+                            let notified = follower_flight.wait();
 
                             match follower_flight.cell_pinned().get() {
                                 State::Running | State::Uninit => {}, // pass down to the notified.await while dropping the pinned cell.
