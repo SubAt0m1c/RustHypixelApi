@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, fmt::{self, Debug}, hash::{BuildHasher, Hash, RandomState}, marker::PhantomData, pin::pin, sync::Arc};
+use std::{borrow::Borrow, fmt::{self, Debug}, hash::{BuildHasher, Hash, RandomState}, marker::PhantomData, sync::Arc};
 
 use concurrent_cell::{Collector, Compute, Operation};
 use papaya::HashMap;
