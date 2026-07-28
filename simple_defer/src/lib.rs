@@ -1,7 +1,9 @@
+//! A really simple cancellable defer function.
+
 use std::mem::ManuallyDrop;
 
 /// runs the given closure when the returned value is dropped.
-#[must_use]
+#[must_use = "The closure will run immedietly if not bound to a value."]
 pub fn defer<R, F: FnOnce() -> R>(deferred: F) -> impl Deferred {
     struct Deferrable<R, F: FnOnce() -> R>(ManuallyDrop<F>);
 
@@ -9,6 +11,9 @@ pub fn defer<R, F: FnOnce() -> R>(deferred: F) -> impl Deferred {
     
     impl<R, F: FnOnce() -> R> Deferred for Deferrable<R, F> {
         /// consumes the deferred closue without running it.
+        /// 
+        /// Useful if you want to protect against panics or a future being dropped but also want to 
+        /// manually handle the success path.
         fn cancel(self) {
             let mut guard = ManuallyDrop::new(self);
 

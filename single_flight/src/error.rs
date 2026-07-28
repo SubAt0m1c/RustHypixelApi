@@ -10,7 +10,7 @@ impl<E> Display for GroupWorkError<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::LeaderFailed => Display::fmt("Leader returned an error!", f),
-            Self::Error(_) => Display::fmt("Leader returned an error", f),
+            Self::Error(_) => Display::fmt("Returned an error while leading!", f),
         }
     }
 }

@@ -1,13 +1,17 @@
 //! Light reimplementation of [RapidHash Nano](https://github.com/Nicoshev/rapidhash/blob/master/rapidhash.h#L432) under MIT license.
 //! 
 //! Not designed to be cryptographically secure.
-//! Use `RandomHash` for randomized hashing for use in hashmasp where you don't need determinism.
 //! 
-//! (Nano because hashing more than 48 bytes is hardly expected)
+//! The `Rand` feature enables `RandomHash` for randomized hashing for use in hashmaps and other structures. (enabled by default)
+//! 
+//! (Nano because hashing more than 48 bytes is often hardly expected)
 
 #![allow(clippy::inline_always, clippy::unreadable_literal)]
 
 use std::{hash::{BuildHasher, Hasher}, hint::cold_path};
+
+#[cfg(feature = "rand")]
+pub use random::RandomHash as RandomHash;
 
 // constants used by the original hasher, corresponding to the secrets at the named index.
 const RH0: u64 = 0x2d358dccaa6c78a5;
@@ -15,8 +19,10 @@ const RH1: u64 = 0x8bb84b93962eacc9;
 const RH2: u64 = 0x4b33a62ed433d4a3;
 const RH7: u64 = 0xaaaaaaaaaaaaaaaa;
 
-/// A Fast, non-cryptographic hash function.
-/// Use `RandomHash` for randomized hashing for use in non-deterministic hashmaps.
+/// A Fast, non-cryptographic hasher.
+/// 
+/// If using the `rand` feature (enabled by default), you can use `RandomHash` for randomized 
+/// hashing to use in non-deterministic hashmaps.
 /// 
 /// Uses the [RapidHash Nano](https://github.com/Nicoshev/rapidhash/blob/master/rapidhash.h#L432) algorithm.
 #[derive(Clone, Copy, Debug)]
@@ -215,33 +221,32 @@ impl BuildHasher for RapidHash {
     }
 }
 
-/// Random generator for `RapidHash`.
-#[derive(Clone)]
-pub struct RandomHash {
-    random_state: u64,
-}
+#[cfg(feature = "rand")]
+mod random {
+    use std::hash::BuildHasher;
+    
+    use crate::RapidHash;
 
-impl Default for RandomHash {
-    // Copied from (fastrand)[https://github.com/smol-rs/fastrand/blob/master/src/global_rng.rs#L203] under MIT.
-    // Generates a sufficiently random initial hasher seed.
-    fn default() -> Self {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        use std::thread;
-        use std::time::Instant;
-        
-        let mut hasher = DefaultHasher::new();
-        Instant::now().hash(&mut hasher);
-        thread::current().id().hash(&mut hasher);
-        Self { random_state: hasher.finish() }
+    /// Random generator for `RapidHash`.
+    #[derive(Clone)]
+    pub struct RandomHash {
+        random_state: u64,
     }
-}
-
-impl BuildHasher for RandomHash {
-    type Hasher = RapidHash;
-
-    fn build_hasher(&self) -> Self::Hasher {
-        RapidHash::with_seed(self.random_state)
+    
+    impl Default for RandomHash {
+        fn default() -> Self {
+            Self {
+                random_state: fastrand::u64(..)
+            }
+        }
+    }
+    
+    impl BuildHasher for RandomHash {
+        type Hasher = RapidHash;
+    
+        fn build_hasher(&self) -> Self::Hasher {
+            RapidHash::with_seed(self.random_state)
+        }
     }
 }
 

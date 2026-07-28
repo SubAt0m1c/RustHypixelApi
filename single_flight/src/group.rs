@@ -41,15 +41,6 @@ where
     pub fn new() -> Group<K, T, E, S> {
         Self::default()
     }
-    
-    #[must_use]
-    pub fn with_hasher(hash_builder: S) -> Group<K, T, E, S> {
-        Self {
-            collector: Arc::new(Collector::default()),
-            map: HashMap::with_hasher(hash_builder),
-            _marker: PhantomData,
-        }
-    }
 }
 
 impl<K, T, E, S> Group<K, T, E, S>
@@ -58,27 +49,69 @@ where
     K: Hash + Eq,
     S: BuildHasher,
 {
+    /// Creates a new `Group` with the given hash builder.
+    #[must_use]
+    pub fn with_hasher(hash_builder: S) -> Group<K, T, E, S> {
+        Self {
+            collector: Arc::new(Collector::default()),
+            map: HashMap::with_hasher(hash_builder),
+            _marker: PhantomData,
+        }
+    }
+    
+    /// Executes the given function while ensuring only one is "in flight" at any given time.
+    /// 
+    /// Duplicate calls wait for the original call to complete and return the same value by cloning it.
+    /// If the returned value is expensive, wrap it in an [`Arc`].
+    /// 
+    /// # Errors
+    /// 
+    /// If the function returns an `Err`
+    /// - The leading caller will return `Err(Some(error))`
+    /// - Non-leading callers will return `Err(None)`
+    pub async fn work<Q, F>(&self, key: &Q, fut: F) -> Result<T, Option<E>>
+    where
+        Q: Hash + Eq + ?Sized + Send + Sync + ToOwned<Owned = K>,
+        F: Future<Output = Result<T, E>> + Send,
+        K: std::borrow::Borrow<Q>,
+    {
+        let mut fut_opt = Some(fut);
+        match self.work_inner(key, &mut fut_opt).await {
+            Ok(val) => Ok(val),
+            Err(GroupWorkError::Error(err)) => Err(Some(err)),
+            Err(GroupWorkError::LeaderFailed) => Err(None),
+        }
+    }
+    
     async fn work_inner<Q, F>(&self, key: &Q, fut: &mut Option<F>) -> Result<T, GroupWorkError<E>>
     where 
         Q: Hash + Eq + ?Sized + Send + Sync + ToOwned<Owned = K>,
         F: Future<Output = Result<T, E>> + Send,
         K: Borrow<Q>,
     {   
+        // this loop matters in the rare event of a flight being accessed while a previously 0 follower flight got dropped and is in the middle of clearing the map.
         'acquire: loop {
             // We get the flight at the time of the worker starting. This will be released when there are no more workers accessing it.
-            let current_flight = self.map.pin().get_or_insert_with(key.to_owned(), || Arc::new(Flight::with_collector(self.collector.clone()))).clone();
+            let current_flight = self.map.pin().get_or_insert_with(key.to_owned(), || {
+                let collector = self.collector.clone();
+                Arc::new(Flight::with_collector(collector))
+            }).clone();
+            
             let mut follower_guard = None;
             'retry: loop {
                 let flight_type = {
                     let pinned = current_flight.cell_pinned();
 
-                    // The original has a problem here where it can leave a dropped leader's stale state in the map.
-                    // It does this so late retryers can still access the old value instead of starting new work.
-                    // If new work is started on this stale value, it needs to have a path where those can become leaders
-                    // so they can work again instead of permanently returning stale values.
-                    // We, however, do not share this problem, since we unconditionally remove values from the map when
-                    // they are finished or the leader is dropped without followers to pick up and finish the work.
-                    // This means that we dont have to reason about if its a stale entry or fresh. Its always fresh.
+                    // The original sometimes purposefully leaves stale entries when an initial leader dropped.
+                    // It does this so late retryers after a new leader was assigned can still access the old value 
+                    // instead of starting new work. Due to this, it reasons about these late retryers vs stale entries
+                    // and lets most paths start new leaders if they are a fresh worker.
+
+                    // We, however, do not share this problem. We avoid it by having all workers hold their own flight
+                    // though retries. This lets them always access the latest state, even if its been removed from the 
+                    // map by a completed leader. This lets us simplify paths so we dont need to start new leaders except
+                    // on uninitialized or leader dropped states.
+
                     let res = pinned.compute(|s| {
                         match s {
                             State::Uninit | State::LeaderDropped => Operation::Set(State::Running),
@@ -89,8 +122,8 @@ where
                     });
 
                     match res {
-                        Compute::Set { old: _, new: _ } => {
-                            // If we previously acquired the guard, we drop it here so it decrements the follower count.
+                        Compute::Set { .. } => {
+                            // If we previously acquired the guard, we drop it here so it decrements the follower count; we're nolonger following.
                             let _ = follower_guard.take();
                             FlightType::Leader(&current_flight)
                         }
@@ -182,29 +215,5 @@ where
         let pinned = flight.cell_pinned();
         let state = pinned.get();
         matches!(state, State::Running | State::Uninit)
-    }
-    
-    /// Executes the given function while ensuring only one is "in flight" at any given time.
-    /// 
-    /// Duplicate calls wait for the original call to complete and return the same value by cloning it.
-    /// If the returned value is expensive, wrap it in an [`Arc`].
-    /// 
-    /// # Errors
-    /// 
-    /// If the function returns an `Err`
-    /// - The leading caller will return `Err(Some(error))`
-    /// - Non-leading callers will return `Err(None)`
-    pub async fn work<Q, F>(&self, key: &Q, fut: F) -> Result<T, Option<E>>
-    where
-        Q: Hash + Eq + ?Sized + Send + Sync + ToOwned<Owned = K>,
-        F: Future<Output = Result<T, E>> + Send,
-        K: std::borrow::Borrow<Q>,
-    {
-        let mut fut_opt = Some(fut);
-        match self.work_inner(key, &mut fut_opt).await {
-            Ok(val) => Ok(val),
-            Err(GroupWorkError::Error(err)) => Err(Some(err)),
-            Err(GroupWorkError::LeaderFailed) => Err(None),
-        }
     }
 }
