@@ -103,9 +103,9 @@ where
                     let pinned = current_flight.cell_pinned();
 
                     // The original sometimes purposefully leaves stale entries when an initial leader dropped.
-                    // It does this so late retryers after a new leader was assigned can still access the old value 
-                    // instead of starting new work. Due to this, it reasons about these late retryers vs stale entries
-                    // and lets most paths start new leaders if they are a fresh worker.
+                    // It does this so late retryers arriving after a new leader was assigned and finished work can 
+                    // still access the old value instead of starting new work. Due to this, it reasons about late
+                    // retryers vs stale entries and lets most paths start new leaders if they are a fresh worker.
 
                     // We, however, do not share this problem. We avoid it by having all workers hold their own flight
                     // though retries. This lets them always access the latest state, even if its been removed from the 

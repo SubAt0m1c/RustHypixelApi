@@ -113,16 +113,16 @@ impl<T> ConcurrentCell<T> {
     /// tied to the lifetime of the guard. This enables implementing complex functions atomically 
     /// such as `get_or_set` or `set_if`, etc.
     pub fn compute<'g, V, G: Guard>(&self, f: impl Fn(&T) -> Operation<T, V>, guard: &'g G) -> Compute<'g, T, V> {
+        let backoff = BackOff::random();
+
         // Box and pointer gymnastics so we only allocate once instead of per retry.
         let mut new_box = Box::<T>::new_uninit();
         let new_ptr = new_box.as_mut_ptr();
+        let mut current_ptr = guard.protect(&self.value, Ordering::Acquire);
 
-        let backoff = BackOff::random();
-        
         loop {
-            let current = guard.protect(&self.value, Ordering::Acquire);
             // SAFETY: We have protected the value, so the pointer will not be freed for as long as the guard is alive.
-            let result = f(unsafe { &*current});
+            let result = f(unsafe { &*current_ptr });
             let new = match result {
                 Operation::Set(new) => new,
                 Operation::Abort(aborted) => return Compute::Aborted(aborted)
@@ -131,23 +131,28 @@ impl<T> ConcurrentCell<T> {
             // SAFETY: `new_ptr` was initialized by a `Box` and can be safely written to.
             unsafe { new_ptr.write(new); } // `new_box` now stores `new` and `new_ptr` points to it.
 
-            match guard.compare_exchange_weak(&self.value, current, new_ptr, Ordering::Release, Ordering::Acquire) {
-                Ok(current) => {
+            match guard.compare_exchange_weak(&self.value, current_ptr, new_ptr, Ordering::Release, Ordering::Acquire) {
+                Ok(current_ptr) => {
                     // leak the boxed `new` into the `AtomicPtr` for later freeing.
                     forget(new_box);
                     
                     // SAFETY: We currently have a guard active so this pointer cannot be freed until its dropped.
                     let new_value = unsafe { &*new_ptr };
                     // SAFETY: `guard.compare_exchange` gurantees that this pointer is safe is if it were protected by `guard.protect`.
-                    let old_value = unsafe { &*current };
+                    let old_value = unsafe { &*current_ptr };
 
                     // SAFETY: We have swapped out the old pointer so no new threads may access it.
-                    unsafe { guard.defer_retire(current, reclaim::boxed); } // defer the retire because we want to keep the old value alive to return it.
+                    unsafe { guard.defer_retire(current_ptr, reclaim::boxed); } // defer the retire because we want to keep the old value alive to return it.
                     
                     return Compute::Set { old: old_value, new: new_value }
                 },
                 // SAFETY: `new_box` stores `new`, which needs to be dropped. The next loop will have an uninit `Box` for the next write.
-                Err(_) => unsafe { ptr::drop_in_place(new_box.as_mut_ptr()); }
+                Err(actual_ptr) => {
+                    current_ptr = actual_ptr; // guard.compare_exchange_weak gurantees this pointer is protected as well.
+                    
+                    // SAFETY: `new_box` stores `new`, which needs to be dropped. The next loop will have an uninit `Box` for the next write.
+                    unsafe { ptr::drop_in_place(new_box.as_mut_ptr()); }
+                }
             }
 
             // exponential backoff spin so the cell getting slammed doesn't cause as much contention when every accessor tries to cas again.
