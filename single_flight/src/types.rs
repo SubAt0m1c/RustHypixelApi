@@ -72,7 +72,7 @@ impl<T> Flight<T>  {
     }
 
     pub fn drop_follower(&self) {
-        self.follower_count.fetch_sub(1, Ordering::AcqRel);
+        self.follower_count.fetch_sub(1, Ordering::Release);
     }
 
     pub fn set_state(&self, state: State<T>) {

@@ -132,21 +132,20 @@ impl<T> ConcurrentCell<T> {
             unsafe { new_ptr.write(new); } // `new_box` now stores `new` and `new_ptr` points to it.
 
             match guard.compare_exchange_weak(&self.value, current_ptr, new_ptr, Ordering::Release, Ordering::Acquire) {
-                Ok(current_ptr) => {
-                    // leak the boxed `new` into the `AtomicPtr` for later freeing.
+                Ok(old_ptr) => {
+                    // leak the boxed `new` into the `AtomicPtr` for later freeing by the collector.
                     forget(new_box);
                     
                     // SAFETY: We currently have a guard active so this pointer cannot be freed until its dropped.
                     let new_value = unsafe { &*new_ptr };
                     // SAFETY: `guard.compare_exchange` gurantees that this pointer is safe is if it were protected by `guard.protect`.
-                    let old_value = unsafe { &*current_ptr };
+                    let old_value = unsafe { &*old_ptr };
 
                     // SAFETY: We have swapped out the old pointer so no new threads may access it.
-                    unsafe { guard.defer_retire(current_ptr, reclaim::boxed); } // defer the retire because we want to keep the old value alive to return it.
+                    unsafe { guard.defer_retire(old_ptr, reclaim::boxed); } // defer the retire because we want to keep the old value alive to return it.
                     
                     return Compute::Set { old: old_value, new: new_value }
                 },
-                // SAFETY: `new_box` stores `new`, which needs to be dropped. The next loop will have an uninit `Box` for the next write.
                 Err(actual_ptr) => {
                     current_ptr = actual_ptr; // guard.compare_exchange_weak gurantees this pointer is protected as well.
                     

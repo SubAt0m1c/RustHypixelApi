@@ -31,7 +31,7 @@ impl CacheRouter {
         let k = key.key();
 
         let res = self.group.work(&k, async move {
-            // moka cache says it basically has in flight deduplication but we do our own.
+            // moka cache says it has in flight deduplication but logs said it was missing some.
             self.cache.try_get_with(k, key.get_or_insert(&self.database, rate_limit)).await
         }).await;
 

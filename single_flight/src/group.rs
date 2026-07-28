@@ -61,8 +61,8 @@ where
     
     /// Executes the given function while ensuring only one is "in flight" at any given time.
     /// 
-    /// Duplicate calls wait for the original call to complete and return the same value by cloning it.
-    /// If the returned value is expensive, wrap it in an [`Arc`].
+    /// Duplicate calls wait for the original call to complete and return the same value by 
+    /// cloning it. If the returned value is expensive, wrap it in an [`Arc`].
     /// 
     /// # Errors
     /// 
@@ -99,57 +99,51 @@ where
             
             let mut follower_guard = None;
             'retry: loop {
-                let flight_type = {
-                    let pinned = current_flight.cell_pinned();
+                // The original sometimes purposefully leaves stale entries when an initial leader dropped.
+                // It does this so late retryers arriving after a new leader was assigned and finished work can 
+                // still access the old value instead of starting new work. Due to this, it reasons about late
+                // retryers vs stale entries and lets most paths start new leaders if they are a fresh worker.
 
-                    // The original sometimes purposefully leaves stale entries when an initial leader dropped.
-                    // It does this so late retryers arriving after a new leader was assigned and finished work can 
-                    // still access the old value instead of starting new work. Due to this, it reasons about late
-                    // retryers vs stale entries and lets most paths start new leaders if they are a fresh worker.
+                // We, however, do not share this problem. We avoid it by having all workers hold their own flight
+                // though retries. This lets them always access the latest state, even if its been removed from the 
+                // map by a completed leader. This lets us simplify paths so we dont need to start new leaders except
+                // on uninitialized or leader dropped states.
 
-                    // We, however, do not share this problem. We avoid it by having all workers hold their own flight
-                    // though retries. This lets them always access the latest state, even if its been removed from the 
-                    // map by a completed leader. This lets us simplify paths so we dont need to start new leaders except
-                    // on uninitialized or leader dropped states.
-
-                    let res = pinned.compute(|s| {
-                        match s {
-                            State::Uninit | State::LeaderDropped => Operation::Set(State::Running),
-                            State::Running => Operation::Abort(ComputeEscape::Follow),
-                            State::LeaderFailed => Operation::Abort(ComputeEscape::LeaderFailed),
-                            State::Success(val) => Operation::Abort(ComputeEscape::Success(val.clone()))
-                        }
-                    });
-
-                    match res {
-                        Compute::Set { .. } => {
-                            // If we previously acquired the guard, we drop it here so it decrements the follower count; we're nolonger following.
-                            let _ = follower_guard.take();
-                            FlightType::Leader(&current_flight)
-                        }
-                        Compute::Aborted(abort_cause) => {
-                            match abort_cause {
-                                ComputeEscape::Follow => {
-                                    // Increment the follower count if we haven't already done so.
-                                    if follower_guard.is_none() {
-                                        if !current_flight.try_follow() {
-                                            // If we dont have a follower lock and we cant acquire one, we try to get the flight again.
-                                            // Once its removed, we can remake the flight and make progress again.
-                                            // 
-                                            // This whole machinary avoids a situation where a worker was dropped with 0 followers and started 
-                                            // removing the flight but another worker gets the flight in between. The worker would now have a
-                                            // flight held outside the map, and a new worker could try to work on the same key, see its missing,
-                                            // and make a new one, causing 2 instances of work to be active at once.
-                                            continue 'acquire;
-                                        }
-                                        follower_guard = Some(defer(|| current_flight.drop_follower()));
+                let match_state = |state: &State<T>| match state {
+                    State::Uninit | State::LeaderDropped => Operation::Set(State::Running),
+                    State::Running => Operation::Abort(ComputeEscape::Follow),
+                    State::LeaderFailed => Operation::Abort(ComputeEscape::LeaderFailed),
+                    State::Success(val) => Operation::Abort(ComputeEscape::Success(val.clone()))
+                };
+                
+                let flight_type = match current_flight.cell_pinned().compute(match_state) {
+                    Compute::Set { .. } => {
+                        // If we previously acquired the guard, we drop it here so it decrements the follower count; we're nolonger following.
+                        let _ = follower_guard.take();
+                        FlightType::Leader(&current_flight)
+                    }
+                    Compute::Aborted(abort_cause) => {
+                        match abort_cause {
+                            ComputeEscape::Follow => {
+                                // Increment the follower count if we haven't already done so.
+                                if follower_guard.is_none() {
+                                    if !current_flight.try_follow() {
+                                        // If we dont have a follower lock and we cant acquire one, we try to get the flight again.
+                                        // Once its removed, we can remake the flight and make progress again.
+                                        // 
+                                        // This whole machinary avoids a situation where a worker was dropped with 0 followers and started 
+                                        // removing the flight but another worker gets the flight in between. The worker would now have a
+                                        // flight held outside the map, and a new worker could try to work on the same key, see its missing,
+                                        // and make a new one, causing 2 instances of work to be active at once.
+                                        continue 'acquire;
                                     }
-                                    // weve now incremented the follower counter properly and can begin following the existing flight.
-                                    FlightType::Follower(&current_flight)
-                                },
-                                ComputeEscape::LeaderFailed => return Err(GroupWorkError::LeaderFailed),
-                                ComputeEscape::Success(val) => return Ok(val)
-                            }
+                                    follower_guard = Some(defer(|| current_flight.drop_follower()));
+                                }
+                                // weve now incremented the follower counter properly and can begin following the existing flight.
+                                FlightType::Follower(&current_flight)
+                            },
+                            ComputeEscape::LeaderFailed => return Err(GroupWorkError::LeaderFailed),
+                            ComputeEscape::Success(val) => return Ok(val)
                         }
                     }
                 };
