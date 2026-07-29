@@ -76,7 +76,7 @@ impl<T> Flight<T>  {
     }
 
     pub fn set_state(&self, state: State<T>) {
-        self.result.set(state);
+        self.result.pin().set(state);
         self.notify.notify_waiters();
     }
     

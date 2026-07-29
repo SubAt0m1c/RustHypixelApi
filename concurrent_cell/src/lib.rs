@@ -6,7 +6,7 @@
 //! 
 //! Exposes an api similar to that of [papaya](https://crates.io/crates/papaya)
 
-use std::{marker::PhantomData, mem::forget, ptr, sync::{Arc, atomic::{AtomicPtr, Ordering}}};
+use std::{marker::PhantomData, mem::{MaybeUninit, forget}, ptr, sync::{Arc, atomic::{AtomicPtr, Ordering}}};
 
 use conquer_util::BackOff;
 use seize::{Guard, reclaim};
@@ -89,35 +89,44 @@ impl<T> ConcurrentCell<T> {
     /// Sets the value to the given value atomically.
     /// 
     /// Existing readers will not see the new value until they call `get` or `get_owned` again.
-    pub fn set(&self, new: T) {
-        let new_ptr = Box::into_raw(Box::new(new));
-        let old = self.value.swap(new_ptr, Ordering::AcqRel);
+    pub fn set<G: Guard>(&self, new: T, guard: &G) {
+        self.swap(new, guard);
+    }
 
-        // SAFETY: The above swap ensures that no new thread may access the old value.
-        unsafe { self.collector.retire(old, reclaim::boxed); }
+    /// Swaps the value to the given value atomically, returning the old value.
+    /// 
+    /// Existing readers will not see the new value until they call `get` or `get_owned` again.
+    pub fn swap<'g, G: Guard>(&self, new: T, guard: &'g G) -> &'g T {
+        let new_ptr = Box::into_raw(Box::new(new));
+        let old_ptr = guard.swap(&self.value, new_ptr, Ordering::AcqRel);
+
+        // SAFETY: the above swap ensures that no new thread may access the old value.
+        unsafe { guard.defer_retire(old_ptr, reclaim::boxed); }
+
+        // SAFETY: `guard.swap` ensures that the returned pointer is protected
+        unsafe { &*old_ptr }
     }
 
     /// Atomically sets the internal value using the given closure.
     /// 
     /// The closure is given the current state of the cell and is set to the new value.
-    pub fn update<G: Guard>(&self, f: impl Fn(&T) -> T, guard: &G) {
+    pub fn update<G: Guard>(&self, mut f: impl FnMut(&T) -> T, guard: &G) {
         self.compute(|t| Operation::<_, ()>::Set(f(t)), guard);
     }
 
     /// Atomically updates the internal value using the given closure.
     /// 
-    /// The closure is given the current state of the cell and updates the value according to `Update`.
+    /// The closure is given the current state of the cell and updates the value according to `Operation`.
     /// This function closure should be pure as it may be retried in the event of concurrent modifications.
     /// 
     /// Returns a `Compute` enum that can be used to inspect the result of the update, 
     /// tied to the lifetime of the guard. This enables implementing complex functions atomically 
     /// such as `get_or_set` or `set_if`, etc.
-    pub fn compute<'g, V, G: Guard>(&self, f: impl Fn(&T) -> Operation<T, V>, guard: &'g G) -> Compute<'g, T, V> {
+    pub fn compute<'g, V, G: Guard>(&self, mut f: impl FnMut(&T) -> Operation<T, V>, guard: &'g G) -> Compute<'g, T, V> {
         let backoff = BackOff::random();
 
-        // Box and pointer gymnastics so we only allocate once instead of per retry.
-        let mut new_box = Box::<T>::new_uninit();
-        let new_ptr = new_box.as_mut_ptr();
+        // Lazy box so we only allocate once if it doesnt abort immedietely.
+        let mut new_box = LazyBox::new();
         let mut current_ptr = guard.protect(&self.value, Ordering::Acquire);
 
         loop {
@@ -128,7 +137,9 @@ impl<T> ConcurrentCell<T> {
                 Operation::Abort(aborted) => return Compute::Aborted(aborted)
             };
 
-            // SAFETY: `new_ptr` was initialized by a `Box` and can be safely written to.
+            let new_ptr: *mut T = new_box.mut_ptr();
+
+            // SAFETY: `new_ptr` was initialized by a the lazy box and can be safely written to.
             unsafe { new_ptr.write(new); } // `new_box` now stores `new` and `new_ptr` points to it.
 
             match guard.compare_exchange_weak(&self.value, current_ptr, new_ptr, Ordering::Release, Ordering::Acquire) {
@@ -150,7 +161,7 @@ impl<T> ConcurrentCell<T> {
                     current_ptr = actual_ptr; // guard.compare_exchange_weak gurantees this pointer is protected as well.
                     
                     // SAFETY: `new_box` stores `new`, which needs to be dropped. The next loop will have an uninit `Box` for the next write.
-                    unsafe { ptr::drop_in_place(new_box.as_mut_ptr()); }
+                    unsafe { ptr::drop_in_place(new_ptr); }
                 }
             }
 
@@ -183,8 +194,15 @@ impl<T, G: Guard> PinnedCell<'_, T, G> {
     /// Sets the value to the given value atomically.
     /// 
     /// Existing readers will not see the new value until they call `get` or `get_owned` again.
-    pub fn set(&mut self, value: T) {
-        self.cell.set(value);
+    pub fn set(&self, new: T) {
+        self.swap(new);
+    }
+
+    /// Swaps the value to the given value atomically, returning the old value.
+    /// 
+    /// Existing readers will not see the new value until they call `get` or `get_owned` again.
+    pub fn swap(&self, new: T) -> &T {
+        self.cell.swap(new, &self.guard)
     }
 
     /// Atomically sets the internal value using the given closure.
@@ -223,4 +241,22 @@ pub enum Compute<'a, T, V> {
         new: &'a T,
     },
     Aborted(V)
+}
+
+struct LazyBox<T> {
+    // This will not drop the value if its written to, but it will drop the allocation
+    inner: Option<Box<MaybeUninit<T>>>
+}
+
+impl<T> LazyBox<T> {
+    const fn new() -> Self {
+        LazyBox { inner: None }
+    }
+
+    /// Returns a mutable pointer to the inner box.
+    /// 
+    /// allocates the box if it hasnt been yet
+    fn mut_ptr(&mut self) -> *mut T {
+        self.inner.get_or_insert_with(|| Box::<T>::new_uninit()).as_mut_ptr()
+    }
 }
