@@ -222,9 +222,6 @@ pin_project! {
     {
         fn drop(this: Pin<&mut Self>) {
             let this = this.project();
-            // Try to lock here. If were the last Larc, the in_flight dropping will drop the flight.
-            // To prevent dangling flights, we need to lock it before we transition to `LeaderDropped`.
-            Larc::try_lock(this.flight); 
             this.flight.update(|s| {
                 if matches!(s, State::Running) {
                     Operation::Set(State::LeaderDropped)
@@ -242,7 +239,7 @@ where
     T: Clone,
     F: Future<Output = Output>,
 {
-    pub fn new(fut: F, flight: &'a Larc<Flight<T>>) -> Self {
+    fn new(fut: F, flight: &'a Larc<Flight<T>>) -> Self {
         Self { fut, flight }
     }
 }

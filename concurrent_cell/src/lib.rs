@@ -17,7 +17,7 @@ pub use seize::OwnedGuard as OwnedGuard;
 
 /// A concurrent, lock-free cell that holds a value.
 pub struct ConcurrentCell<T> {
-    collector: Arc<Collector>,
+    collector: Arc<Collector>, // Arced to reduce Cell size 
     value: AtomicPtr<T>,
     _marker: PhantomData<T>, // ensures the cell is only `Send` and `Sync` if `T` is `Send` and `Sync`.
 }
@@ -160,7 +160,7 @@ impl<T> ConcurrentCell<T> {
                 Err(actual_ptr) => {
                     current_ptr = actual_ptr; // guard.compare_exchange_weak guarantees this pointer is protected as well.
                     
-                    // SAFETY: `new_box` stores `new`, which needs to be dropped. The next loop will have an uninit `Box` for the next write.
+                    // SAFETY: we have written `new` to `new_ptr`. We need to drop it.
                     unsafe { ptr::drop_in_place(new_ptr); }
                 }
             }

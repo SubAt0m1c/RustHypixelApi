@@ -2,6 +2,8 @@
 //! 
 //! Really specific use case for us but it solves a problem!
 
+#![allow(unused)]
+
 use std::{ops::Deref, ptr::NonNull, sync::atomic::{self, AtomicU64, Ordering}};
 
 const NONE_AND_OPEN: u64 = 0;
