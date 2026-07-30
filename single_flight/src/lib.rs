@@ -1,7 +1,8 @@
+// Some parts of this project's code are derived and/or copied from [async_singleflight](https://github.com/PureWhiteWu/async_singleflight)
+// Their original copyright license applies, under MIT or Apache 2.0.
+
 //! Asyncronous concurrent single flight request deduplication.
 //! Runtime agnostic, built for high concurrency.
-//! 
-//! Heavily based on [async_singleflight](https://github.com/PureWhiteWu/async_singleflight) under the MIT license.
 
 mod larc;
 mod types;
@@ -26,6 +27,7 @@ mod tests {
 
     async fn expensive_fn<const RES: usize>(delay: u64) -> Result<usize, ()> {
         tokio::time::sleep(Duration::from_millis(delay)).await;
+        println!("expensive fn compute finished");
         Ok(RES)
     }
 

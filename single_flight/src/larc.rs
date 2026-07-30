@@ -1,6 +1,8 @@
-//! A simple, lockable arc. Based on the moka [`MiniArc`](https://github.com/moka-rs/moka/blob/e617b5f064cdb3ce9845cef06961fdbf07bd9946/src/common/concurrent/arc.rs)
-//! 
-//! Really specific use case for us but it solves a problem!
+// Some parts of this code are derived from the moka [`MiniArc`](https://github.com/moka-rs/moka/blob/e617b5f064cdb3ce9845cef06961fdbf07bd9946/src/common/concurrent/arc.rs)
+// Their original copyright license applies, under MIT or Apache 2.0.
+// Copyright (c) 2020 - 2026 Tatsuya Kawano
+
+//! A simple, lockable arc. 
 
 #![allow(unused)]
 
@@ -69,7 +71,7 @@ impl<T: ?Sized> Darc<T> {
 
     /// Returns the number of `Larc`s currently accessing this `Darc`.
     pub fn open_count(this: &Self, order: Ordering) -> u64 {
-        this.data().open.load(order)
+        this.data().open.load(order) & !LOCKED
     }
     
     /// Checks if this `Darc` points to the same data as the other pointer.
@@ -164,7 +166,7 @@ impl<T: ?Sized> Larc<T> {
 
     /// Returns the number of other `Larc`s currently accessing the underlying `Darc`.
     pub fn open_count(this: &Self, order: Ordering) -> u64 {
-        this.data().open.load(order)
+        this.data().open.load(order) & !LOCKED
     }
 
     /// Checks if this `Darc` points to the same data as the other pointer.
@@ -216,9 +218,8 @@ impl<T: ?Sized> Drop for Darc<T> {
     fn drop(&mut self) {
         if self.data().accessors.fetch_sub(1, Ordering::Release) == 1 {
             atomic::fence(Ordering::Acquire);
-            unsafe {
-                drop(Box::from_raw(self.ptr.as_ptr()));
-            }
+            // SAFETY: 
+            unsafe { drop(Box::from_raw(self.ptr.as_ptr())); }
         }
     }
 }
