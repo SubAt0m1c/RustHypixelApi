@@ -1,14 +1,13 @@
 use std::{borrow::Borrow, fmt::{self, Debug}, hash::{BuildHasher, Hash, RandomState}, marker::PhantomData, sync::Arc};
 
-use concurrent_cell::{Collector, Compute, Operation};
+use concurrent_cell::Collector;
 use papaya::HashMap;
-use simple_defer::{Deferred, defer};
 
-use crate::{error::GroupWorkError, types::{ComputeEscape, Flight, FlightType, Leader, State}};
+use crate::{error::GroupWorkError, types::{Follower, InFlight, MapFlight, Next, State}};
 
 pub struct Group<K, T, E, S = RandomState> {
     collector: Arc<Collector>, // Collector for the ConcurrentCells in the Flights.
-    map: HashMap<K, Arc<Flight<T>>, S>,
+    map: HashMap<K, MapFlight<T>, S>,
     _marker: PhantomData<fn(E)>,
 }
 
@@ -27,7 +26,7 @@ where
     fn default() -> Self {
         Self {
             collector: Arc::new(Collector::default()),
-            map: HashMap::<K, Arc<Flight<T>>, S>::default(),
+            map: HashMap::<K, MapFlight<T>, S>::default(),
             _marker: PhantomData,
         }
     }
@@ -89,124 +88,37 @@ where
         F: Future<Output = Result<T, E>> + Send,
         K: Borrow<Q>,
     {   
-        // this loop matters in the rare event of a flight being accessed while a previously 0 follower flight got dropped and is in the middle of clearing the map.
-        'acquire: loop {
-            // We get the flight at the time of the worker starting. This will be released when there are no more workers accessing it.
-            let current_flight = self.map.pin().get_or_insert_with(key.to_owned(), || {
-                let collector = self.collector.clone();
-                Arc::new(Flight::with_collector(collector))
-            }).clone();
-            
-            let mut follower_guard = None;
-            'retry: loop {
-                // The original sometimes purposefully leaves stale entries when an initial leader dropped.
-                // It does this so late retryers arriving after a new leader was assigned and finished work can 
-                // still access the old value instead of starting new work. Due to this, it reasons about late
-                // retryers vs stale entries and lets most paths start new leaders if they are a fresh worker.
+        // The lifetime of this InFlight holds the flight alive in the map. If we are the last remaining flight, 
+        // we will drop it AND remove it from the map.
+        let current_flight = InFlight::get_flight(key, &self.map, &self.collector);
 
-                // We, however, do not share this problem. We avoid it by having all workers hold their own flight
-                // though retries. This lets them always access the latest state, even if its been removed from the 
-                // map by a completed leader. This lets us simplify paths so we dont need to start new leaders except
-                // on uninitialized or leader dropped states.
+        'next_state: loop {
+            match current_flight.next(fut) {
+                Next::Lead(leader) => {
+                    let result = leader.await;
 
-                let match_state = |state: &State<T>| match state {
-                    State::Uninit | State::LeaderDropped => Operation::Set(State::Running),
-                    State::Running => Operation::Abort(ComputeEscape::Follow),
-                    State::LeaderFailed => Operation::Abort(ComputeEscape::LeaderFailed),
-                    State::Success(val) => Operation::Abort(ComputeEscape::Success(val.clone()))
-                };
-                
-                let flight_type = match current_flight.cell_pinned().compute(match_state) {
-                    Compute::Set { .. } => {
-                        // If we previously acquired the guard, we drop it here so it decrements the follower count; we're nolonger following.
-                        let _ = follower_guard.take();
-                        FlightType::Leader(&current_flight)
-                    }
-                    Compute::Aborted(abort_cause) => {
-                        match abort_cause {
-                            ComputeEscape::Follow => {
-                                // Increment the follower count if we haven't already done so.
-                                if follower_guard.is_none() {
-                                    if !current_flight.try_follow() {
-                                        // If we dont have a follower lock and we cant acquire one, we try to get the flight again.
-                                        // Once its removed, we can remake the flight and make progress again.
-                                        // 
-                                        // This whole machinary avoids a situation where a worker was dropped with 0 followers and started 
-                                        // removing the flight but another worker gets the flight in between. The worker would now have a
-                                        // flight held outside the map, and a new worker could try to work on the same key, see its missing,
-                                        // and make a new one, causing 2 instances of work to be active at once.
-                                        continue 'acquire;
-                                    }
-                                    follower_guard = Some(defer(|| current_flight.drop_follower()));
-                                }
-                                // weve now incremented the follower counter properly and can begin following the existing flight.
-                                FlightType::Follower(&current_flight)
-                            },
-                            ComputeEscape::LeaderFailed => return Err(GroupWorkError::LeaderFailed),
-                            ComputeEscape::Success(val) => return Ok(val)
+                    // Unconditionally remove here. Leader.await succeeding will automatically set the state to success and any flights that join
+                    // before the flight is removed can happily take that non-stale success out. Late retryers own their own flight, and wont need
+                    // it to remain in the map.
+                    let _ = self.map.pin().remove_if(key, |_, existing| existing.same_flight(&current_flight)); 
+                    return result.map_err(GroupWorkError::Error)
+                }
+                Next::Follow(follower) => {
+                    loop {
+                        let wait_for_leader = follower.wait();
+                        // weird method call here because rust_analyzer struggles to figure its type T.
+                        match Follower::<T>::current_state(&follower, &follower.guard_state()) {
+                            State::Uninit | State::Running => {} // exit the match to await so we dont await while holding the state guard.
+                            State::LeaderDropped => continue 'next_state,
+                            State::LeaderFailed => return Err(GroupWorkError::LeaderFailed),
+                            State::Success(val) => return Ok(val.clone()),
                         }
-                    }
-                };
-
-                match flight_type {
-                    FlightType::Follower(follower_flight) => {
-                        loop {
-                            let notified = follower_flight.wait();
-
-                            match follower_flight.cell_pinned().get() {
-                                State::Running | State::Uninit => {}, // pass down to the notified.await while dropping the pinned cell.
-                                State::LeaderDropped => continue 'retry,
-                                State::LeaderFailed => return Err(GroupWorkError::LeaderFailed),
-                                State::Success(val) => return Ok(val.clone()),
-                            }
-
-                            notified.await;
-                        }
-                    }
-                    FlightType::Leader(leading_flight) => {
-                        let leader = Leader::new(
-                            fut.take().expect("Future should be available as leader"),
-                            leading_flight
-                        );
-    
-                        // this guard is so that dropped leaders without any followers will remove their entry from the map
-                        // if it has followers, a follower can pick up the task.
-                        let drop_guard = defer(||  {
-                            if leading_flight.close() {
-                                let _ = self.map.pin().remove_if(key, |_, this| Arc::ptr_eq(this, leading_flight));
-                            }
-                        });
-                        
-                        let result = leader.await;
-                        
-                        // the leader can always remove it from the map. Old retries will still hold their own existing flight reference.
-                        // We also dont need to close the flight to new followers, since they will simply see the success value and clone it out.
-                        let _ = self.map.pin().remove_if(key, |_, existing| Arc::ptr_eq(existing, leading_flight)); 
-                        drop_guard.cancel(); // we have already removed the entry, no need to try it again.
-                        
-                        return result.map_err(GroupWorkError::Error)
+                        wait_for_leader.await;                        
                     }
                 }
+                Next::LeaderFailed => return Err(GroupWorkError::LeaderFailed),
+                Next::Success(val) => return Ok(val)
             }
         }
-    }
-
-    /// Internal helper function for tests.
-    #[cfg(test)]
-    #[doc(hidden)]
-    pub(crate) fn check_if_stale<Q>(&self, key: &Q) -> bool
-    where
-        Q: Hash + Eq + ?Sized + Send + Sync + ToOwned<Owned = K>,
-        K: std::borrow::Borrow<Q>, 
-    {
-        let map = self.map.pin();
-        let res = map.get(key);
-        let Some(flight) = res else {
-            return false
-        };
-
-        let pinned = flight.cell_pinned();
-        let state = pinned.get();
-        matches!(state, State::Running | State::Uninit)
     }
 }

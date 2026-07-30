@@ -1,8 +1,8 @@
 //! A concurrent lock-free cell.
 //! 
 //! Similar in idea to [ArcSwap](https://crates.io/crates/arc-swap) but doesn't require the inner value to be arced.
-//! This is accomplished by using [seize](https://crates.io/crates/seize) memory reclaimation.
-//! Use `ArcSwap` if the internal value will be arced anways.
+//! This is accomplished by using [seize](https://crates.io/crates/seize) memory reclamation.
+//! Use `ArcSwap` if the internal value will be arced anyway.
 //! 
 //! Exposes an api similar to that of [papaya](https://crates.io/crates/papaya)
 
@@ -65,7 +65,7 @@ impl<T> ConcurrentCell<T> {
         }
     }
 
-    /// Pins this cell, enabling a more frendly, user guard-free way to access values.
+    /// Pins this cell, enabling a more friendly, user guard-free way to access values.
     /// This pinned cell reference is [`Send`] and [`Sync`].
     /// 
     /// Internally holds an owned guard to itself, so it prevents garbage collection.
@@ -88,14 +88,14 @@ impl<T> ConcurrentCell<T> {
 
     /// Sets the value to the given value atomically.
     /// 
-    /// Existing readers will not see the new value until they call `get` or `get_owned` again.
+    /// Existing readers will not see the new value until they call `get` again.
     pub fn set<G: Guard>(&self, new: T, guard: &G) {
         self.swap(new, guard);
     }
 
     /// Swaps the value to the given value atomically, returning the old value.
     /// 
-    /// Existing readers will not see the new value until they call `get` or `get_owned` again.
+    /// Existing readers will not see the new value until they call `get` again.
     pub fn swap<'g, G: Guard>(&self, new: T, guard: &'g G) -> &'g T {
         let new_ptr = Box::into_raw(Box::new(new));
         let old_ptr = guard.swap(&self.value, new_ptr, Ordering::AcqRel);
@@ -109,8 +109,8 @@ impl<T> ConcurrentCell<T> {
 
     /// Atomically sets the internal value using the given closure.
     /// 
-    /// The closure is given the current state of the cell and is set to the new value.
-    pub fn update<G: Guard>(&self, mut f: impl FnMut(&T) -> T, guard: &G) {
+    /// The closure is given the current state of the cell and is set to the returned value.
+    pub fn update<G: Guard>(&self, f: impl Fn(&T) -> T, guard: &G) {
         self.compute(|t| Operation::<_, ()>::Set(f(t)), guard);
     }
 
@@ -122,7 +122,7 @@ impl<T> ConcurrentCell<T> {
     /// Returns a `Compute` enum that can be used to inspect the result of the update, 
     /// tied to the lifetime of the guard. This enables implementing complex functions atomically 
     /// such as `get_or_set` or `set_if`, etc.
-    pub fn compute<'g, V, G: Guard>(&self, mut f: impl FnMut(&T) -> Operation<T, V>, guard: &'g G) -> Compute<'g, T, V> {
+    pub fn compute<'g, V, G: Guard>(&self, f: impl Fn(&T) -> Operation<T, V>, guard: &'g G) -> Compute<'g, T, V> {
         let backoff = BackOff::random();
 
         // Lazy box so we only allocate once if it doesnt abort immedietely.
@@ -149,7 +149,7 @@ impl<T> ConcurrentCell<T> {
                     
                     // SAFETY: We currently have a guard active so this pointer cannot be freed until its dropped.
                     let new_value = unsafe { &*new_ptr };
-                    // SAFETY: `guard.compare_exchange` gurantees that this pointer is safe is if it were protected by `guard.protect`.
+                    // SAFETY: `guard.compare_exchange` guarantees that this pointer is safe is if it were protected by `guard.protect`.
                     let old_value = unsafe { &*old_ptr };
 
                     // SAFETY: We have swapped out the old pointer so no new threads may access it.
@@ -158,7 +158,7 @@ impl<T> ConcurrentCell<T> {
                     return Compute::Set { old: old_value, new: new_value }
                 },
                 Err(actual_ptr) => {
-                    current_ptr = actual_ptr; // guard.compare_exchange_weak gurantees this pointer is protected as well.
+                    current_ptr = actual_ptr; // guard.compare_exchange_weak guarantees this pointer is protected as well.
                     
                     // SAFETY: `new_box` stores `new`, which needs to be dropped. The next loop will have an uninit `Box` for the next write.
                     unsafe { ptr::drop_in_place(new_ptr); }
@@ -193,14 +193,14 @@ impl<T, G: Guard> PinnedCell<'_, T, G> {
 
     /// Sets the value to the given value atomically.
     /// 
-    /// Existing readers will not see the new value until they call `get` or `get_owned` again.
+    /// Existing readers will not see the new value until they call `get` again.
     pub fn set(&self, new: T) {
         self.swap(new);
     }
 
     /// Swaps the value to the given value atomically, returning the old value.
     /// 
-    /// Existing readers will not see the new value until they call `get` or `get_owned` again.
+    /// Existing readers will not see the new value until they call `get` again.
     pub fn swap(&self, new: T) -> &T {
         self.cell.swap(new, &self.guard)
     }

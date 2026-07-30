@@ -10,7 +10,6 @@ papaya = "0.2.4"
 pin-project-lite = "0.2.17"
 concurrent_cell = { path = "../concurrent_cell" }
 simple_defer = { path = "../simple_defer" }
-conquer-util = { version = "0.3.0", features = ["random", "back-off"] }
 
 [dev-dependencies]
 futures = "0.3.33"

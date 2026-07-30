@@ -2227,7 +2227,6 @@ name = "single_flight"
 version = "0.0.1"
 dependencies = [
  "concurrent_cell",
- "conquer-util",
  "event-listener",
  "fastrand",
  "futures",
