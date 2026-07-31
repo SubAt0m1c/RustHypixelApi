@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 seize = "0.5.1"
-conquer-util = { version = "0.3.0", features = ["random", "back-off"] }
+fastrand = { version = "2.5.0", default-features = false }

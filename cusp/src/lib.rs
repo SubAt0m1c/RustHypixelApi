@@ -9,7 +9,7 @@
 
 use std::{borrow::Borrow, marker::PhantomData, mem::{MaybeUninit, forget}, ptr, sync::{LazyLock, atomic::{AtomicPtr, Ordering}}};
 
-use conquer_util::BackOff;
+use fastrand::Rng;
 use seize::{Guard, reclaim};
 
 pub use seize::Collector as Collector;
@@ -149,7 +149,7 @@ impl<T, C: Borrow<Collector>> Cell<T, C> {
     /// Returns a `Compute` enum that can be used to inspect the result of the update, tied to the 
     /// lifetime of the guard.
     pub fn compute<'g, V, G: Guard>(&self, f: impl Fn(&T) -> Operation<T, V>, guard: &'g G) -> Compute<'g, T, V> {
-        let backoff = BackOff::random();
+        let mut backoff = BackOff::new();
 
         // Lazy box so we only allocate once if it doesnt abort immedietely.
         let mut new_box = LazyBox::new();
@@ -191,7 +191,6 @@ impl<T, C: Borrow<Collector>> Cell<T, C> {
                 }
             }
 
-            // exponential backoff spin so the cell getting slammed doesn't cause as much contention when every accessor tries to cas again.
             backoff.spin();
         }
     }
@@ -287,5 +286,32 @@ impl<T> LazyBox<T> {
     /// allocates the box if it hasnt been yet
     fn mut_ptr(&mut self) -> *mut T {
         self.inner.get_or_insert_with(|| Box::<T>::new_uninit()).as_mut_ptr()
+    }
+}
+
+struct BackOff {
+    backoff: u64,
+    state: Rng,
+}
+
+impl BackOff {
+    const INIT_BACKOFF: u64 = 4;
+    const MAX_BACKOFF: u64 = 1024;
+    
+    fn new() -> Self {
+        BackOff { backoff: Self::INIT_BACKOFF, state: fastrand::Rng::new() }
+    }
+
+    fn spin(&mut self) {
+        let low =  self.backoff >> 1;
+        let high = self.backoff;
+
+        let spins = self.state.u64(low..high);
+        
+        for _ in 0..spins {
+            std::hint::spin_loop();
+        }
+
+        self.backoff = (high << 1).min(Self::MAX_BACKOFF);
     }
 }
