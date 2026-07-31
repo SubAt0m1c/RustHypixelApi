@@ -76,7 +76,7 @@ impl<T: ?Sized> Darc<T> {
     
     /// Checks if this `Darc` points to the same data as the other pointer.
     pub fn ptr_eq<P: Pointer<Pointee = LarcInner<T>>>(&self, other: &P) -> bool {
-        std::ptr::eq(self.ptr.as_ptr(), Pointer::ptr(other).as_ptr())
+        std::ptr::addr_eq(self.ptr.as_ptr(), Pointer::ptr(other).as_ptr())
     }
 
     fn data(&self) -> &LarcInner<T> {
@@ -171,7 +171,7 @@ impl<T: ?Sized> Larc<T> {
 
     /// Checks if this `Darc` points to the same data as the other pointer.
     pub fn ptr_eq<P: Pointer<Pointee = LarcInner<T>>>(this: &Self, other: &P) -> bool {
-        std::ptr::eq(this.ptr.as_ptr(), Pointer::ptr(other).as_ptr())
+        std::ptr::addr_eq(this.ptr.as_ptr(), Pointer::ptr(other).as_ptr())
     }
 
     /// Returns `true` if the backing `Darc` is locked, `false` otherwise.
@@ -218,7 +218,7 @@ impl<T: ?Sized> Drop for Darc<T> {
     fn drop(&mut self) {
         if self.data().accessors.fetch_sub(1, Ordering::Release) == 1 {
             atomic::fence(Ordering::Acquire);
-            // SAFETY: 
+            // SAFETY: We are the last owner of the LarcInner, so we can safely drop it.
             unsafe { drop(Box::from_raw(self.ptr.as_ptr())); }
         }
     }
@@ -230,6 +230,7 @@ impl<T: ?Sized> Drop for Larc<T> {
         
         if self.data().accessors.fetch_sub(1, Ordering::Release) == 1 {
             atomic::fence(Ordering::Acquire);
+            // SAFETY: We are the last owner of the LarcInner, so we can safely drop it.
             unsafe { drop(Box::from_raw(self.ptr.as_ptr())); }
         }
     }

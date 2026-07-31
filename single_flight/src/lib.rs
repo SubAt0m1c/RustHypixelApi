@@ -27,7 +27,7 @@ mod tests {
 
     async fn expensive_fn<const RES: usize>(delay: u64) -> Result<usize, ()> {
         tokio::time::sleep(Duration::from_millis(delay)).await;
-        println!("expensive fn compute finished");
+        println!("expensive fn compute finished: {RES}");
         Ok(RES)
     }
 
@@ -67,12 +67,17 @@ mod tests {
 
         let g = Arc::new(Group::<u64, usize, ()>::new());
         let mut handlers = Vec::with_capacity(10);
-        for _ in 0..10 {
+        for _ in 0..1000 {
             let g = g.clone();
             handlers.push(tokio::spawn(async move {
-                let res = g.work(&42, expensive_fn::<8>(300)).await;
-                let r = res.unwrap();
-                println!("{r}");
+                let rand = fastrand::usize(1..=3);
+                if rand == 1 {
+                    let _ = g.work(&42, expensive_fn::<8>(999)).await;
+                } else {
+                    let delay = fastrand::u64(900..1200);
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    let _ = g.work(&42, expensive_fn::<9>(999)).await;
+                }
             }));
         }
 
