@@ -10,4 +10,4 @@ categories = ["concurrency"]
 
 [dependencies]
 seize = "0.5.1"
-fastrand = { version = "2.5.0", default-features = false }
+fastrand = { version = "2.5.0" }

@@ -309,7 +309,7 @@ impl BackOff {
     const MAX_BACKOFF: u64 = 1024;
     
     fn new() -> Self {
-        BackOff { backoff: Self::INIT_BACKOFF, state: fastrand::Rng::new() }
+        BackOff { backoff: Self::INIT_BACKOFF, state: Rng::new() }
     }
 
     fn spin(&mut self) {
@@ -323,5 +323,11 @@ impl BackOff {
         }
 
         self.backoff = (high << 1).min(Self::MAX_BACKOFF);
+    }
+}
+
+impl Default for BackOff {
+    fn default() -> Self {
+        Self::new()
     }
 }
