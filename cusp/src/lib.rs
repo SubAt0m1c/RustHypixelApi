@@ -1,10 +1,9 @@
 //! A concurrent lock-free cell.
 //! 
 //! Enables lock free reads and writes of values of any type.
+//! Uses [seize](https://crates.io/crates/seize) memory reclamation.
 //! 
-//! Similar in idea to [ArcSwap](https://crates.io/crates/arc-swap) but doesn't require the inner value to be arced.
-//! This is accomplished by using [seize](https://crates.io/crates/seize) memory reclamation.
-//! Use `ArcSwap` if the internal value will be arced anyway.
+//! Functions similarly to [ArcSwap](https://crates.io/crates/arc-swap) without arcing the value internally.
 //! 
 //! Exposes an api similar to that of [papaya](https://crates.io/crates/papaya)
 
@@ -26,24 +25,25 @@ impl Borrow<Collector> for GlobalCollector {
     }
 }
 
-/// A concurrent, lock-free cell that holds a value.
-pub struct ConcurrentCell<T, C = GlobalCollector> {
+/// A concurrent, lock-free cell.
+/// 
+/// Use either `pin()` or `guard()` to guard the data,
+/// and then use methods such as `get` or `set` to access or modify the value.
+pub struct Cell<T, C = GlobalCollector> {
     value: AtomicPtr<T>,
     _marker: PhantomData<T>, // ensures the cell is only `Send` and `Sync` if `T` is `Send` and `Sync`.
     collector: C,
 }
 
-impl<T> ConcurrentCell<T, GlobalCollector> {
+impl<T> Cell<T, GlobalCollector> {
     /// Creates a new `ConcurrentCell` initialized with the given value using the global collector.
     pub fn new(value: T) -> Self {
         Self::with_collector(value, GlobalCollector)
     }
 }
 
-impl<T, C: Borrow<Collector>> ConcurrentCell<T, C> {
+impl<T, C: Borrow<Collector>> Cell<T, C> {
     /// Creates a new `ConcurrentCell` with the given value and collector.
-    /// 
-    /// Enables using one collector with multiple concurrent cells.
     pub fn with_collector(value: T, collector: C) -> Self {
         let ptr = Box::into_raw(Box::new(value));
         Self {
@@ -52,7 +52,6 @@ impl<T, C: Borrow<Collector>> ConcurrentCell<T, C> {
             _marker: PhantomData
         }
     }
-
 
     /// Returns a guard for this cell.
     /// 
@@ -109,8 +108,9 @@ impl<T, C: Borrow<Collector>> ConcurrentCell<T, C> {
         // SAFETY: We have protected the value, so the pointer will not be freed for as long as the guard is alive.
         unsafe { &*ptr }
     }
-
+    
     /// Sets the value to the given value atomically.
+    /// Equivalent to `swap` but drops the returned reference.
     /// 
     /// Existing readers will not see the new value until they call `get` again.
     pub fn set<G: Guard>(&self, new: T, guard: &G) {
@@ -131,21 +131,23 @@ impl<T, C: Borrow<Collector>> ConcurrentCell<T, C> {
         unsafe { &*old_ptr }
     }
 
-    /// Atomically sets the internal value using the given closure.
+    /// Updates the internal value using the given closure atomically.
     /// 
-    /// The closure is given the current state of the cell and is set to the returned value.
+    /// The closure is given the current state of the cell and is set it's return value.
+    /// This function closure should be pure as it may be retried in the event of
+    /// concurrent modifications.
     pub fn update<G: Guard>(&self, f: impl Fn(&T) -> T, guard: &G) {
         self.compute(|t| Operation::<_, ()>::Set(f(t)), guard);
     }
 
-    /// Atomically updates the internal value using the given closure.
+    /// Runs an operation on the internal value using the given closure atomically.
     /// 
-    /// The closure is given the current state of the cell and updates the value according to `Operation`.
-    /// This function closure should be pure as it may be retried in the event of concurrent modifications.
+    /// The closure is given the current state of the cell and updates the value according to 
+    /// `Operation`. This function closure should be pure as it may be retried in the event of 
+    /// concurrent modifications.
     /// 
-    /// Returns a `Compute` enum that can be used to inspect the result of the update, 
-    /// tied to the lifetime of the guard. This enables implementing complex functions atomically 
-    /// such as `get_or_set` or `set_if`, etc.
+    /// Returns a `Compute` enum that can be used to inspect the result of the update, tied to the 
+    /// lifetime of the guard.
     pub fn compute<'g, V, G: Guard>(&self, f: impl Fn(&T) -> Operation<T, V>, guard: &'g G) -> Compute<'g, T, V> {
         let backoff = BackOff::random();
 
@@ -184,8 +186,8 @@ impl<T, C: Borrow<Collector>> ConcurrentCell<T, C> {
                 Err(actual_ptr) => {
                     current_ptr = actual_ptr; // guard.compare_exchange_weak guarantees this pointer is protected as well.
                     
-                    // SAFETY: we have written `new` to `new_ptr`. We need to drop it.
-                    unsafe { ptr::drop_in_place(new_ptr); }
+                    // SAFETY: We have written `new` to `new_ptr`.
+                    unsafe { ptr::drop_in_place(new_ptr); } // we need to drop `new` before writing to `new_ptr` again.
                 }
             }
 
@@ -195,10 +197,10 @@ impl<T, C: Borrow<Collector>> ConcurrentCell<T, C> {
     }
 }
 
-impl<T, C> Drop for ConcurrentCell<T, C> {
+impl<T, C> Drop for Cell<T, C> {
     fn drop(&mut self) {
         let ptr = *self.value.get_mut();
-        // SAFETY: The last value in the cell hasn't yet been retired, so it is safe to drop.
+        // SAFETY: &mut means we are the only owner of the cell.
         unsafe { drop(Box::from_raw(ptr)); }
     }
 }
@@ -206,7 +208,7 @@ impl<T, C> Drop for ConcurrentCell<T, C> {
 /// `PinnedCell` acts as a reference to a concurrent cell that owns its own `guard`.
 pub struct PinnedCell<'a, T, G: Guard, C: Borrow<Collector> = GlobalCollector> {
     guard: G,
-    cell: &'a ConcurrentCell<T, C>,
+    cell: &'a Cell<T, C>,
 }
 
 impl<T, G: Guard, C: Borrow<Collector>> PinnedCell<'_, T, G, C> {
@@ -229,20 +231,23 @@ impl<T, G: Guard, C: Borrow<Collector>> PinnedCell<'_, T, G, C> {
         self.cell.swap(new, &self.guard)
     }
 
-    /// Atomically sets the internal value using the given closure.
+    /// Updates the internal value using the given closure atomically.
     /// 
-    /// The closure is given the current state of the cell and is set to the new value.
+    /// The closure is given the current state of the cell and is set it's return value.
+    /// This function closure should be pure as it may be retried in the event of
+    /// concurrent modifications.
     pub fn update(&self, f: impl Fn(&T) -> T) {
         self.compute(|t| Operation::<_, ()>::Set(f(t)));
     }
     
-    /// Atomically updates the internal value using the given closure.
+    /// Runs an operation on the internal value using the given closure atomically.
     /// 
-    /// The closure is given the current state of the cell and updates the value according to `Update`.
-    /// This function should be pure as it may be retried in the event of concurrent modifications.
+    /// The closure is given the current state of the cell and updates the value according to 
+    /// `Operation`. This function closure should be pure as it may be retried in the event of 
+    /// concurrent modifications.
     /// 
-    /// Returns a `Compute` enum that can be used to inspect the result of the update.
-    /// This enables implementing complex functions such as `get_or_set` or `set_if`.
+    /// Returns a `Compute` enum that can be used to inspect the result of the update, tied to the 
+    /// lifetime of the guard.
     pub fn compute<V>(&self, f: impl Fn(&T) -> Operation<T, V>) -> Compute<'_, T, V> {
         self.cell.compute(f, &self.guard)
     }

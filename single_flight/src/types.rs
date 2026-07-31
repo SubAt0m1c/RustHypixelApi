@@ -1,6 +1,6 @@
 use std::{borrow::Borrow, hash::{BuildHasher, Hash}, pin::Pin, task::{Context, Poll}};
 
-use concurrent_cell::{Compute, ConcurrentCell, Operation, PinnedCell};
+use cusp::{Compute, Cell, Operation, PinnedCell};
 use event_listener::{Event, EventListener};
 use papaya::{HashMap, LocalGuard};
 use pin_project_lite::pin_project;
@@ -158,14 +158,14 @@ pub(crate) struct StateGuard<'a> {
 }
 
 pub(crate) struct Flight<T> {
-    result: ConcurrentCell<State<T>>,
+    result: Cell<State<T>>,
     notify: BigNotify,
 }
 
 impl<T> Flight<T>  {
     pub fn new() -> Self {
         Self {
-            result: ConcurrentCell::new(State::Uninit),
+            result: Cell::new(State::Uninit),
             notify: BigNotify::new(),
         }
     }
