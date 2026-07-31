@@ -1,7 +1,12 @@
 [package]
 name = "cusp"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+license = "MIT or Apache-2.0"
+authors = ["SubAt0mic"]
+description = "A Concurrent, Lock-Free cell with atomic operations."
+keywords = ["lock-free", "rcu", "atomic", "cell", "concurrent"]
+categories = ["concurrency"]
 
 [dependencies]
 seize = "0.5.1"

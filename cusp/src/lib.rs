@@ -1,4 +1,4 @@
-//! A concurrent lock-free cell.
+//! `cusp` provides a concurrent lock-free `cell`.
 //! 
 //! Enables lock free reads and writes of values of any type.
 //! Uses [seize](https://crates.io/crates/seize) memory reclamation.
@@ -16,7 +16,9 @@ pub use seize::Collector as Collector;
 pub use seize::LocalGuard as LocalGuard;
 pub use seize::OwnedGuard as OwnedGuard;
 
-// global collector because it reduces cell size and more often than not you don't need unique collector ownership.
+// global collector because it reduces cell size and more often than not you don't need unique collector ownership. 
+// Seize bounds memory usage well, so the benefits of freeing everything on drop are minimal. Cells especially may
+// hardly have any live references and guards to need freeing on drop.
 pub struct GlobalCollector;
 impl Borrow<Collector> for GlobalCollector {
     fn borrow(&self) -> &Collector {
@@ -212,6 +214,9 @@ pub struct PinnedCell<'a, T, G: Guard, C: Borrow<Collector> = GlobalCollector> {
 
 impl<T, G: Guard, C: Borrow<Collector>> PinnedCell<'_, T, G, C> {
     /// Gets a reference to the value stored in this cell.
+    /// 
+    /// Values will see a 'snapshot' of the value at the time of its load.
+    /// Concurrent writes will not be visible until `get` is called again.
     pub fn get(&self) -> &T {
         self.cell.get(&self.guard)
     }
@@ -252,17 +257,22 @@ impl<T, G: Guard, C: Borrow<Collector>> PinnedCell<'_, T, G, C> {
     }
 }
 
-/// Represents the result of an update operation.
+/// The operation to perform on the cell.
 /// 
-/// `Set` will set the value to `T`, while `Abort` will not update the value.
+/// - `Set` will set the value to `T`
+/// - `Abort` will abort the operation and return the escaped value.
 pub enum Operation<T, V> {
-    /// Indicates that the value should be updated to `T`.
+    /// Indicates that the value will be updated to `T`.
     Set(T),
-    /// Indicates that the value will not be updated.
+    /// Indicates that the value will not be updated and provides a means of escaping the compute 
+    /// with a value.
     Abort(V),
 }
 
 /// Represents the result of a compute operation.
+/// 
+/// - `Set` means the value was updated, returning the previous and new values.
+/// - `Aborted` means the value was not updated, returning the escaped value.
 pub enum Compute<'a, T, V> {
     Set {
         old: &'a T,
