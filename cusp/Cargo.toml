@@ -1,8 +1,8 @@
 [package]
 name = "cusp"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2024"
-license = "MIT or Apache-2.0"
+license = "MIT OR Apache-2.0"
 authors = ["SubAt0mic"]
 description = "A Concurrent, Lock-Free cell with atomic operations."
 keywords = ["lock-free", "rcu", "atomic", "cell", "concurrent"]
