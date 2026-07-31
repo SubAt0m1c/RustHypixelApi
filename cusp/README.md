@@ -17,7 +17,7 @@ let value = pinned.get(); // &usize, bound to the lifetime of `pinned`.
 assert_eq!(*value, 0);
 
 pinned.set(1);
-let new_value = pinned.get(); // this get now points to the new set value.
+let new_value = pinned.get(); // this `get` now points to the newly set value.
 assert_eq!(*new_value, 1);
 
 // note `value` still refers to the value prior to the `set`. 
@@ -34,15 +34,15 @@ fn get_or_set(cell: &Cell<Option<usize>>, new: usize) -> usize {
     let pinned = cell.pin();
     let result = pinned.compute(|value| {
         match value {
-            Some(v) => Operation::Abort(*v),
+            Some(_) => Operation::Abort(()), // abort will return a reference to the value seen in this closure.
             None => Operation::Set(Some(new)),
         }
-    }); // `result` is bound to the lifetime of `pinned`.
+    }); // `result` is bound to the lifetime of `pinned`, and functions like any other reference from a `get` or `swap` call.
 
     match result {
-        Compute::Aborted(v) => v,
+        Compute::Aborted { current, value: (), } => current.unwrap(), // this unwrap will always succeed, since we checked it in the closure.
         Compute::Set { old, new } => {
-            assert!(matches!(old, None));
+            assert!(old.is_none());
             new.unwrap() // this unwrap will always succeed, since it was set to `Some(new)`.
         }
     }

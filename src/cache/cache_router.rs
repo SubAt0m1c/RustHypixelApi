@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use actix_web::web::Bytes;
 use ltmdb::{ResultExt, Runtime};
 use rapidhash_lite::RandomHash;
@@ -15,7 +13,7 @@ pub type Database = ltmdb::Database<TokioRT, RandomHash>;
 pub struct CacheRouter {
     cache: MemoryCache,
     database: Database,
-    group: Group<UuidKey, CacheEntry, Arc<ProcessError>, RandomHash>
+    group: Group<UuidKey, CacheEntry, ProcessError, RandomHash>,
 }
 
 impl CacheRouter {
@@ -42,7 +40,7 @@ impl CacheRouter {
 
         match res {
             Ok(entry) => Ok(entry.into_bytes()),
-            Err(Some(e)) => Err(Arc::unwrap_or_clone(e)),
+            Err(Some(e)) => Err(e),
             Err(None) => Err(ProcessError::InternalServer("Single Flight Leader returned an error.")),
         }
     }

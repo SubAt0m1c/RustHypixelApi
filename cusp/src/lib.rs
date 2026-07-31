@@ -150,7 +150,7 @@ impl<T, C: Borrow<Collector>> Cell<T, C> {
     /// 
     /// Returns a `Compute` enum that can be used to inspect the result of the update, tied to the 
     /// lifetime of the guard.
-    pub fn compute<'g, V, G: Guard>(&self, f: impl Fn(&T) -> Operation<T, V>, guard: &'g G) -> Compute<'g, T, V> {
+    pub fn compute<'g, V, G: Guard>(&self, f: impl Fn(&'g T) -> Operation<T, V>, guard: &'g G) -> Compute<'g, T, V> {
         let mut backoff = BackOff::new();
 
         // Lazy box so we only allocate once if it doesnt abort immedietely.
@@ -159,10 +159,11 @@ impl<T, C: Borrow<Collector>> Cell<T, C> {
 
         loop {
             // SAFETY: We have protected the value, so the pointer will not be freed for as long as the guard is alive.
-            let result = f(unsafe { &*current_ptr });
+            let current = unsafe { &*current_ptr };
+            let result = f(current);
             let new = match result {
                 Operation::Set(new) => new,
-                Operation::Abort(aborted) => return Compute::Aborted(aborted)
+                Operation::Abort(aborted) => return Compute::Aborted { current, value: aborted },
             };
 
             let new_ptr: *mut T = new_box.mut_ptr();
@@ -278,7 +279,10 @@ pub enum Compute<'a, T, V> {
         old: &'a T,
         new: &'a T,
     },
-    Aborted(V)
+    Aborted {
+        current: &'a T,
+        value: V,
+    }
 }
 
 struct LazyBox<T> {
@@ -323,11 +327,5 @@ impl BackOff {
         }
 
         self.backoff = (high << 1).min(Self::MAX_BACKOFF);
-    }
-}
-
-impl Default for BackOff {
-    fn default() -> Self {
-        Self::new()
     }
 }
