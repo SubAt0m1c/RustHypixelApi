@@ -1,12 +1,10 @@
-use std::{borrow::Borrow, fmt::{self, Debug}, hash::{BuildHasher, Hash, RandomState}, marker::PhantomData, sync::Arc};
+use std::{borrow::Borrow, fmt::{self, Debug}, hash::{BuildHasher, Hash, RandomState}, marker::PhantomData};
 
-use concurrent_cell::Collector;
 use papaya::HashMap;
 
 use crate::{error::GroupWorkError, types::{Follower, InFlight, MapFlight, Next, State}};
 
 pub struct Group<K, T, E, S = RandomState> {
-    collector: Arc<Collector>, // Collector for the ConcurrentCells in the Flights.
     map: HashMap<K, MapFlight<T>, S>,
     _marker: PhantomData<fn(E)>,
 }
@@ -25,7 +23,6 @@ where
 {
     fn default() -> Self {
         Self {
-            collector: Arc::new(Collector::default()),
             map: HashMap::<K, MapFlight<T>, S>::default(),
             _marker: PhantomData,
         }
@@ -52,7 +49,6 @@ where
     #[must_use]
     pub fn with_hasher(hash_builder: S) -> Group<K, T, E, S> {
         Self {
-            collector: Arc::new(Collector::default()),
             map: HashMap::with_hasher(hash_builder),
             _marker: PhantomData,
         }
@@ -90,7 +86,7 @@ where
     {   
         // The lifetime of this InFlight holds the flight alive in the map. If we are the last remaining flight, 
         // we will drop it AND remove it from the map.
-        let current_flight = InFlight::get_flight(key, &self.map, &self.collector);
+        let current_flight = InFlight::get_flight(key, &self.map);
 
         'next_state: loop {
             match current_flight.next(fut) {

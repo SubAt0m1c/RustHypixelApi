@@ -1,12 +1,14 @@
 //! A concurrent lock-free cell.
 //! 
+//! Enables lock free reads and writes of values of any type.
+//! 
 //! Similar in idea to [ArcSwap](https://crates.io/crates/arc-swap) but doesn't require the inner value to be arced.
 //! This is accomplished by using [seize](https://crates.io/crates/seize) memory reclamation.
 //! Use `ArcSwap` if the internal value will be arced anyway.
 //! 
 //! Exposes an api similar to that of [papaya](https://crates.io/crates/papaya)
 
-use std::{marker::PhantomData, mem::{MaybeUninit, forget}, ptr, sync::{Arc, atomic::{AtomicPtr, Ordering}}};
+use std::{borrow::Borrow, marker::PhantomData, mem::{MaybeUninit, forget}, ptr, sync::{LazyLock, atomic::{AtomicPtr, Ordering}}};
 
 use conquer_util::BackOff;
 use seize::{Guard, reclaim};
@@ -15,23 +17,34 @@ pub use seize::Collector as Collector;
 pub use seize::LocalGuard as LocalGuard;
 pub use seize::OwnedGuard as OwnedGuard;
 
-/// A concurrent, lock-free cell that holds a value.
-pub struct ConcurrentCell<T> {
-    collector: Arc<Collector>, // Arced to reduce Cell size 
-    value: AtomicPtr<T>,
-    _marker: PhantomData<T>, // ensures the cell is only `Send` and `Sync` if `T` is `Send` and `Sync`.
+// global collector because it reduces cell size and more often than not you don't need unique collector ownership.
+pub struct GlobalCollector;
+impl Borrow<Collector> for GlobalCollector {
+    fn borrow(&self) -> &Collector {
+        static GLOBAL_COLLECTOR: LazyLock<Collector> = LazyLock::new(Collector::new);
+        &GLOBAL_COLLECTOR
+    }
 }
 
-impl<T> ConcurrentCell<T> {
-    /// Creates a new `ConcurrentCell` initialized with the given value.
-    pub fn new(value: T) -> Self {
-        Self::with_collector(value, Arc::new(Collector::new()))
-    }
+/// A concurrent, lock-free cell that holds a value.
+pub struct ConcurrentCell<T, C = GlobalCollector> {
+    value: AtomicPtr<T>,
+    _marker: PhantomData<T>, // ensures the cell is only `Send` and `Sync` if `T` is `Send` and `Sync`.
+    collector: C,
+}
 
+impl<T> ConcurrentCell<T, GlobalCollector> {
+    /// Creates a new `ConcurrentCell` initialized with the given value using the global collector.
+    pub fn new(value: T) -> Self {
+        Self::with_collector(value, GlobalCollector)
+    }
+}
+
+impl<T, C: Borrow<Collector>> ConcurrentCell<T, C> {
     /// Creates a new `ConcurrentCell` with the given value and collector.
     /// 
     /// Enables using one collector with multiple concurrent cells.
-    pub fn with_collector(value: T, collector: Arc<Collector>) -> Self {
+    pub fn with_collector(value: T, collector: C) -> Self {
         let ptr = Box::into_raw(Box::new(value));
         Self {
             collector,
@@ -40,25 +53,32 @@ impl<T> ConcurrentCell<T> {
         }
     }
 
+
     /// Returns a guard for this cell.
     /// 
     /// Note that holding a guard prevents garbage collection.
+    /// Ideally you would never hold a guard over long-running tasks.
     pub fn guard(&self) -> LocalGuard<'_> {
-        self.collector.enter()
+        self.collector.borrow().enter()
     }
 
     /// Returns an owned guard for this cell.
     /// This guard is [`Send`] and [`Sync`].
     /// 
     /// Note that holding a guard prevents garbage collection.
+    /// Ideally you would never hold a guard over long-running tasks.
+    /// 
+    /// Send and sync often implies over await, however you should likely restructure the code
+    /// if the await can be long.
     pub fn guard_owned(&self) -> OwnedGuard<'_> {
-        self.collector.enter_owned()
+        self.collector.borrow().enter_owned()
     }
 
     /// Pins this cell, enabling a more frendly, user guard-free way to access values.
     /// 
     /// Internally holds a guard to itself, so it prevents garbage collection.
-    pub fn pin(&self) -> PinnedCell<'_, T, LocalGuard<'_>> {
+    /// Ideally you would never hold a guard over long-running tasks.
+    pub fn pin(&self) -> PinnedCell<'_, T, LocalGuard<'_>, C> {
         PinnedCell {
             guard: self.guard(),
             cell: self,
@@ -69,7 +89,11 @@ impl<T> ConcurrentCell<T> {
     /// This pinned cell reference is [`Send`] and [`Sync`].
     /// 
     /// Internally holds an owned guard to itself, so it prevents garbage collection.
-    pub fn pin_owned(&self) -> PinnedCell<'_, T, OwnedGuard<'_>> {
+    /// Ideally you would never hold a guard over long-running tasks.
+    /// 
+    /// Send and sync often implies over await, however you should likely restructure the code
+    /// if the await can be long.
+    pub fn pin_owned(&self) -> PinnedCell<'_, T, OwnedGuard<'_>, C> {
         PinnedCell {
             guard: self.guard_owned(),
             cell: self,
@@ -171,7 +195,7 @@ impl<T> ConcurrentCell<T> {
     }
 }
 
-impl<T> Drop for ConcurrentCell<T> {
+impl<T, C> Drop for ConcurrentCell<T, C> {
     fn drop(&mut self) {
         let ptr = *self.value.get_mut();
         // SAFETY: The last value in the cell hasn't yet been retired, so it is safe to drop.
@@ -180,12 +204,12 @@ impl<T> Drop for ConcurrentCell<T> {
 }
 
 /// `PinnedCell` acts as a reference to a concurrent cell that owns its own `guard`.
-pub struct PinnedCell<'a, T, G: Guard> {
+pub struct PinnedCell<'a, T, G: Guard, C: Borrow<Collector> = GlobalCollector> {
     guard: G,
-    cell: &'a ConcurrentCell<T>,
+    cell: &'a ConcurrentCell<T, C>,
 }
 
-impl<T, G: Guard> PinnedCell<'_, T, G> {
+impl<T, G: Guard, C: Borrow<Collector>> PinnedCell<'_, T, G, C> {
     /// Gets a reference to the value stored in this cell.
     pub fn get(&self) -> &T {
         self.cell.get(&self.guard)

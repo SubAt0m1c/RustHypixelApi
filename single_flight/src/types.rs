@@ -1,5 +1,6 @@
-use std::{borrow::Borrow, hash::{BuildHasher, Hash}, pin::Pin, sync::Arc, task::{Context, Poll}};
-use concurrent_cell::{Collector, Compute, ConcurrentCell, Operation, PinnedCell};
+use std::{borrow::Borrow, hash::{BuildHasher, Hash}, pin::Pin, task::{Context, Poll}};
+
+use concurrent_cell::{Compute, ConcurrentCell, Operation, PinnedCell};
 use event_listener::{Event, EventListener};
 use papaya::{HashMap, LocalGuard};
 use pin_project_lite::pin_project;
@@ -42,13 +43,13 @@ where
     K: Hash + Eq + Borrow<Q>,
     S: BuildHasher,
 {
-    pub fn get_flight(key: &'a Q, map: &'a HashMap<K, MapFlight<T>, S>, collector: &Arc<Collector>) -> Self {
+    pub fn get_flight(key: &'a Q, map: &'a HashMap<K, MapFlight<T>, S>) -> Self {
         let mut next_flight = None; // This lets us move values out of the compute closure while using an insert operation.
         let pinned_map = map.pin();
 
         pinned_map.compute(key.to_owned(), |entry| {
-            fn insert_flight<T>(collector: &Arc<Collector>, next_flight: &mut Option<Larc<Flight<T>>>) -> MapFlight<T> {
-                let darc = Darc::new(Flight::with_collector(collector.clone()));
+            fn insert_flight<T>(next_flight: &mut Option<Larc<Flight<T>>>) -> MapFlight<T> {
+                let darc = Darc::new(Flight::new());
                 *next_flight = darc.try_open(); // This can never fail since we havent locked the darc nor let any other threads access it.
                 MapFlight::new(darc)
             }
@@ -60,9 +61,9 @@ where
                         papaya::Operation::Abort(())
                     }
                     // if the flight is locked, it will never be unlocked and we can safely insert a new one and start working.
-                    None => papaya::Operation::Insert(insert_flight(collector, &mut next_flight))
+                    None => papaya::Operation::Insert(insert_flight(&mut next_flight))
                 }
-                None => papaya::Operation::Insert(insert_flight(collector, &mut next_flight)),
+                None => papaya::Operation::Insert(insert_flight(&mut next_flight)),
             }
         });
 
@@ -162,9 +163,9 @@ pub(crate) struct Flight<T> {
 }
 
 impl<T> Flight<T>  {
-    pub fn with_collector(collector: Arc<Collector>) -> Self {
+    pub fn new() -> Self {
         Self {
-            result: ConcurrentCell::with_collector(State::Uninit, collector),
+            result: ConcurrentCell::new(State::Uninit),
             notify: BigNotify::new(),
         }
     }
