@@ -31,20 +31,15 @@ where
 
 impl<K, T, E, S> Group<K, T, E, S>
 where
-    S: Default,
-{
-    #[must_use]
-    pub fn new() -> Group<K, T, E, S> {
-        Self::default()
-    }
-}
-
-impl<K, T, E, S> Group<K, T, E, S>
-where
     T: Clone,
     K: Hash + Eq,
     S: BuildHasher,
 {
+    #[must_use]
+    pub fn new() -> Group<K, T, E, S> where S: Default {
+        Self::default()
+    }
+    
     /// Creates a new `Group` with the given hash builder.
     #[must_use]
     pub fn with_hasher(hash_builder: S) -> Group<K, T, E, S> {

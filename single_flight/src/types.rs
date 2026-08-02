@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, hash::{BuildHasher, Hash}, pin::Pin, task::{Context, Poll}};
+use std::{borrow::Borrow, hash::{BuildHasher, Hash}, pin::Pin, task::{Context, Poll, ready}};
 
 use cusp::{Compute, Cell, Operation, PinnedCell};
 use event_listener::{Event, EventListener};
@@ -70,24 +70,18 @@ where
         let flight = next_flight.expect("Shouldve set next_flight to Some");
         Self { flight, key, map }
     }
-}
 
-
-impl<Q, K, T, S>  InFlight<'_, Q, K, T, S>
-where
-    T: Clone,
-    Q: Hash + Eq + ?Sized + Send + Sync + ToOwned<Owned = K>,
-    K: Hash + Eq + Borrow<Q>,
-    S: BuildHasher,
-{
     /// Attempts to transition the flight to the next state.
     /// 
     /// Returns an enum signifying the state transition and what to do next.
     /// 
     /// # Panics
     /// Panics if the future is not available when leading.
-    /// This should only happen if `next` is called after becoming a leader.
-    pub fn next<F: Future<Output = Output> + Send, Output>(&self, fut: &mut Option<F>) -> Next<'_, T, F, Output> {
+    /// This should only happen if `next` is called after already becoming a leader.
+    pub fn next<F: Future<Output = Output> + Send, Output>(&self, fut: &mut Option<F>) -> Next<'_, T, F, Output>
+    where
+        T: Clone
+    {
         let match_state = |state: &State<T>| match state {
             State::Uninit | State::LeaderDropped => Operation::Set(State::Running),
             State::Running => Operation::Abort(Next::Follow(Follower { in_flight: &self.flight })),
@@ -95,13 +89,12 @@ where
             State::Success(val) => Operation::Abort(Next::Success(val.clone()))
         };
     
-        // This lets us drop the Set returned values so we dont hold the cell_pinned() outside the function.
-        match self.flight.cell_pinned().compute(match_state) {
+        match self.flight.state_cell().compute(match_state) {
             Compute::Set { .. } => {
                 let fut = fut.take().expect("Future should be available when leading!");
                 Next::Lead(Leader::new(fut, &self.flight))
             }
-            Compute::Aborted(next) => next
+            Compute::Aborted { value, ..} => value
         }
     }
 }
@@ -116,7 +109,7 @@ where
         // we can remove this flight from the map if we are the last remaining flight.
         if Larc::try_lock(&self.flight) {
             let _ = self.map.pin().remove_if(self.key, |_, flight| {
-                Larc::ptr_eq(&self.flight, &flight.flight)
+                flight.same_flight(self)
             });
         }
     }
@@ -180,14 +173,12 @@ impl<T> Flight<T>  {
     /// 
     /// Note that the closure may be retried in the event of concurrent updates.
     pub fn update<V>(&self, f: impl Fn(&State<T>) -> Operation<State<T>, V>) {
-        let pinned = self.cell_pinned();
-        if matches!(pinned.compute(f), Compute::Set { .. }) {
-            // we only want to notify waiters if a new value was actually set.
+        if self.state_cell().compute(f).is_set() {
             self.notify.notify_listeners();
         }
     }
 
-    pub fn cell_pinned(&self) -> PinnedCell<'_, State<T>, LocalGuard<'_>> {
+    pub fn state_cell(&self) -> PinnedCell<'_, State<T>, LocalGuard<'_>> {
         self.result.pin()
     } 
 
@@ -254,14 +245,14 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
-        let result = this.fut.poll(cx);
-        if let Poll::Ready(val) = &result {
-            match val {
-                Ok(v) => this.flight.set_state(State::Success(v.clone())),
-                Err(_) => this.flight.set_state(State::LeaderFailed),
-            }
+        
+        let result = ready!(this.fut.poll(cx));
+        match &result {
+            Ok(v) => this.flight.set_state(State::Success(v.clone())),
+            Err(_) => this.flight.set_state(State::LeaderFailed),
         }
-        result
+        
+        Poll::Ready(result)
     }
 }
 
@@ -275,11 +266,11 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
-        let result = this.fut.poll(cx);
-        if let Poll::Ready(val) = &result {
-            this.flight.set_state(State::Success(val.clone()));
-        }
-        result
+        
+        let val = ready!(this.fut.poll(cx));
+        this.flight.set_state(State::Success(val.clone()));
+        
+        Poll::Ready(val)
     }
 }
 

@@ -519,7 +519,7 @@ dependencies = [
 
 [[package]]
 name = "cusp"
-version = "2.0.2"
+version = "2.1.2"
 dependencies = [
  "fastrand",
  "seize",
@@ -2177,7 +2177,6 @@ dependencies = [
  "futures",
  "papaya",
  "pin-project-lite",
- "simple_defer",
  "tokio",
 ]
 

@@ -29,7 +29,7 @@ You can also perform complex atomic operations using `compute`.
 ```rust
 use cusp::{Cell, Operation, Compute};
 
-/// Gets the value of the sell if `Some`, otherwise sets it to `new` and returns `new`.
+/// Gets the value of the cell if `Some`, otherwise sets it to `new` and returns `new`.
 fn get_or_set(cell: &Cell<Option<usize>>, new: usize) -> usize {
     let pinned = cell.pin();
     let result = pinned.compute(|value| {

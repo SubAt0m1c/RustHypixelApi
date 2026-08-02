@@ -9,7 +9,6 @@ fastrand = "2.5.0"
 papaya = "0.2.4"
 pin-project-lite = "0.2.17"
 cusp = { path = "../cusp" }
-simple_defer = { path = "../simple_defer" }
 
 [dev-dependencies]
 futures = "0.3.33"

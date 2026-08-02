@@ -7,7 +7,7 @@
 //! 
 //! Exposes an api similar to that of [papaya](https://crates.io/crates/papaya)
 
-use std::{borrow::Borrow, marker::PhantomData, mem::{MaybeUninit, forget}, ptr, sync::{LazyLock, atomic::{AtomicPtr, Ordering}}};
+use std::{borrow::Borrow, marker::PhantomData, mem::{ManuallyDrop, MaybeUninit, forget}, ptr, sync::{LazyLock, atomic::{AtomicPtr, Ordering}}};
 
 use fastrand::Rng;
 use seize::{Guard, reclaim};
@@ -16,9 +16,10 @@ pub use seize::Collector as Collector;
 pub use seize::LocalGuard as LocalGuard;
 pub use seize::OwnedGuard as OwnedGuard;
 
-// global collector because it reduces cell size and more often than not you don't need unique collector ownership. 
+// global collector because it reduces cell size (an owned collector is 960 bytes) and more often than not you don't need unique collector ownership. 
 // Seize bounds memory usage well, so the benefits of freeing everything on drop are minimal. Cells especially may
 // hardly have any live references and guards to need freeing on drop.
+#[derive(Default, Clone, Copy)]
 pub struct GlobalCollector;
 impl Borrow<Collector> for GlobalCollector {
     fn borrow(&self) -> &Collector {
@@ -33,8 +34,8 @@ impl Borrow<Collector> for GlobalCollector {
 /// and then use methods such as `get` or `set` to access or modify the value.
 pub struct Cell<T, C = GlobalCollector> {
     value: AtomicPtr<T>,
-    _marker: PhantomData<T>, // ensures the cell is only `Send` and `Sync` if `T` is `Send` and `Sync`.
     collector: C,
+    _marker: PhantomData<T>, // ensures the cell is only `Send` and `Sync` if `T` is `Send` and `Sync`.
 }
 
 impl<T> Cell<T, GlobalCollector> {
@@ -49,8 +50,8 @@ impl<T, C: Borrow<Collector>> Cell<T, C> {
     pub fn with_collector(value: T, collector: C) -> Self {
         let ptr = Box::into_raw(Box::new(value));
         Self {
-            collector,
             value: AtomicPtr::new(ptr),
+            collector,
             _marker: PhantomData
         }
     }
@@ -153,22 +154,21 @@ impl<T, C: Borrow<Collector>> Cell<T, C> {
     pub fn compute<'g, V, G: Guard>(&self, f: impl Fn(&'g T) -> Operation<T, V>, guard: &'g G) -> Compute<'g, T, V> {
         let mut backoff = BackOff::new();
 
-        // Lazy box so we only allocate once if it doesnt abort immedietely.
+        // Lazy box so we only allocate once and only if it doesnt abort immedietely.
         let mut new_box = LazyBox::new();
         let mut current_ptr = guard.protect(&self.value, Ordering::Acquire);
 
         loop {
             // SAFETY: We have protected the value, so the pointer will not be freed for as long as the guard is alive.
-            let current = unsafe { &*current_ptr };
-            let result = f(current);
-            let new = match result {
+            let current: &'g T = unsafe { &*current_ptr };
+            let new = match f(current) {
                 Operation::Set(new) => new,
-                Operation::Abort(aborted) => return Compute::Aborted { current, value: aborted },
+                Operation::Abort(value) => return Compute::Aborted { current, value },
             };
 
             let new_ptr: *mut T = new_box.mut_ptr();
 
-            // SAFETY: `new_ptr` was initialized by a the lazy box and can be safely written to.
+            // SAFETY: `new_ptr` was initialized by the lazy box and can be safely written to.
             unsafe { new_ptr.write(new); } // `new_box` now stores `new` and `new_ptr` points to it.
 
             match guard.compare_exchange_weak(&self.value, current_ptr, new_ptr, Ordering::Release, Ordering::Acquire) {
@@ -176,15 +176,15 @@ impl<T, C: Borrow<Collector>> Cell<T, C> {
                     // leak the boxed `new` into the `AtomicPtr` for later freeing by the collector.
                     forget(new_box);
                     
-                    // SAFETY: We currently have a guard active so this pointer cannot be freed until its dropped.
-                    let new_value = unsafe { &*new_ptr };
+                    // SAFETY: We currently have a guard active so this pointer cannot be freed until the guard is dropped.
+                    let new: &'g T = unsafe { &*new_ptr };
                     // SAFETY: `guard.compare_exchange` guarantees that this pointer is safe is if it were protected by `guard.protect`.
-                    let old_value = unsafe { &*old_ptr };
+                    let old: &'g T = unsafe { &*old_ptr };
 
                     // SAFETY: We have swapped out the old pointer so no new threads may access it.
                     unsafe { guard.defer_retire(old_ptr, reclaim::boxed); } // defer the retire because we want to keep the old value alive to return it.
                     
-                    return Compute::Set { old: old_value, new: new_value }
+                    return Compute::Set { old, new }
                 },
                 Err(actual_ptr) => {
                     current_ptr = actual_ptr; // guard.compare_exchange_weak guarantees this pointer is protected as well.
@@ -197,6 +197,21 @@ impl<T, C: Borrow<Collector>> Cell<T, C> {
             backoff.spin();
         }
     }
+    
+    /// Returns a mutable reference to the cell's value.
+    pub fn get_mut(&mut self) -> &mut T {
+        let ptr = *self.value.get_mut();
+        // SAFETY: &mut means we are the only owner of the cell.
+        unsafe { &mut *ptr }
+    }
+
+    /// Consumes the cell, returning the held value.
+    pub fn into_inner(self) -> T {
+        let mut this = ManuallyDrop::new(self); // we have to disable our own freeing of the value in our drop impl.
+        let ptr = *this.value.get_mut();
+        // SAFETY: self means we exclusively own the cell.
+        unsafe { *Box::from_raw(ptr) }
+    }
 }
 
 impl<T, C> Drop for Cell<T, C> {
@@ -204,6 +219,16 @@ impl<T, C> Drop for Cell<T, C> {
         let ptr = *self.value.get_mut();
         // SAFETY: &mut means we are the only owner of the cell.
         unsafe { drop(Box::from_raw(ptr)); }
+    }
+}
+
+impl<T: Default, C: Borrow<Collector> + Default> Default for Cell<T, C> {
+    fn default() -> Self {
+        Self {
+            value: AtomicPtr::new(Box::into_raw(Box::default())),
+            collector: Default::default(),
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -273,15 +298,33 @@ pub enum Operation<T, V> {
 /// Represents the result of a compute operation.
 /// 
 /// - `Set` means the value was updated, returning the previous and new values.
-/// - `Aborted` means the value was not updated, returning the escaped value.
+/// - `Aborted` means the value was not updated, returning the current value of the cell and the escaped value.
 pub enum Compute<'a, T, V> {
+    /// Indicates that the value was updated.
     Set {
+        /// The previous value of the cell.
         old: &'a T,
+        /// The value the cell was set to.
         new: &'a T,
     },
+    /// Indicates that the value was not updated.
     Aborted {
+        /// The current value of the cell, seen in the compute closure when it was run.
         current: &'a T,
+        /// The escaped value provided by the caller during the compute.
         value: V,
+    }
+}
+
+impl<T, V> Compute<'_, T, V> {
+    /// Returns `true` if the value was updated.
+    pub fn is_set(&self) -> bool {
+        matches!(self, Compute::Set { .. })
+    }
+
+    /// Returns `true` if the operation was aborted.
+    pub fn is_aborted(&self) -> bool {
+        matches!(self, Compute::Aborted { .. })
     }
 }
 
