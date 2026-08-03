@@ -1,6 +1,9 @@
+use std::time::Duration;
+
+use actix_web::web::Bytes;
 use uuid::Uuid;
 
-use crate::{cache::{UuidKey, cache_router::Database, memory::CacheEntry}, error::ProcessError, routes::stats::RateLimit};
+use crate::{cache::{UuidKey, cache_router::Database}, error::ProcessError, routes::stats::RateLimit};
 
 pub trait CacheKey: Send {
     /// flag for db storage/etc. 
@@ -14,7 +17,7 @@ pub trait CacheKey: Send {
     /// If this function returns `Ok()`, it will add the Bytes into the memory cache.
     /// Otherwise, no entry will be added to the memory cache and the error should be
     /// propegated upwards.
-    fn get_or_insert(&self, db: &Database, stats: &RateLimit) -> impl Future<Output = Result<CacheEntry, ProcessError>> + Send;
+    fn get_or_insert(&self, db: &Database, stats: &RateLimit) -> impl Future<Output = Result<(Bytes, Duration), ProcessError>> + Send;
     
     fn key(&self) -> UuidKey {
         UuidKey::encode(self.uuid(), Self::KEYFLAG)

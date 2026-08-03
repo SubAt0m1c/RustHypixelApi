@@ -19,6 +19,8 @@ pub use seize::OwnedGuard as OwnedGuard;
 // global collector because it reduces cell size (an owned collector is 960 bytes) and more often than not you don't need unique collector ownership. 
 // Seize bounds memory usage well, so the benefits of freeing everything on drop are minimal. Cells especially may
 // hardly have any live references and guards to need freeing on drop.
+
+/// The default global collector for cusp cells.
 #[derive(Default, Clone, Copy)]
 pub struct GlobalCollector;
 impl Borrow<Collector> for GlobalCollector {
@@ -39,14 +41,14 @@ pub struct Cell<T, C = GlobalCollector> {
 }
 
 impl<T> Cell<T, GlobalCollector> {
-    /// Creates a new `ConcurrentCell` initialized with the given value using the global collector.
+    /// Creates a new `Cell` initialized with the given value using the global collector.
     pub fn new(value: T) -> Self {
         Self::with_collector(value, GlobalCollector)
     }
 }
 
 impl<T, C: Borrow<Collector>> Cell<T, C> {
-    /// Creates a new `ConcurrentCell` with the given value and collector.
+    /// Creates a new `Cell` with the given value and collector.
     pub fn with_collector(value: T, collector: C) -> Self {
         let ptr = Box::into_raw(Box::new(value));
         Self {
@@ -119,7 +121,7 @@ impl<T, C: Borrow<Collector>> Cell<T, C> {
     pub fn set<G: Guard>(&self, new: T, guard: &G) {
         self.swap(new, guard);
     }
-
+    
     /// Swaps the value to the given value atomically, returning the old value.
     /// 
     /// Existing readers will not see the new value until they call `get` again.
@@ -309,7 +311,7 @@ pub enum Compute<'a, T, V> {
     },
     /// Indicates that the value was not updated.
     Aborted {
-        /// The current value of the cell, seen in the compute closure when it was run.
+        /// The current value of the cell, as seen in the compute closure when it was run.
         current: &'a T,
         /// The escaped value provided by the caller during the compute.
         value: V,
@@ -329,7 +331,7 @@ impl<T, V> Compute<'_, T, V> {
 }
 
 struct LazyBox<T> {
-    // This will not drop the value if its written to, but it will drop the allocation
+    // This will not drop the value if its written to, but it will free the allocation
     inner: Option<Box<MaybeUninit<T>>>
 }
 

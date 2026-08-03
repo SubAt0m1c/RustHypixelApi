@@ -5,7 +5,6 @@ use uuid::Uuid;
 
 pub mod compression;
 pub mod cache_router;
-pub mod memory;
 pub mod cache_key;
 
 #[derive(Eq, Clone, Copy)]

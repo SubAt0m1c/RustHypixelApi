@@ -9,12 +9,11 @@ members = [
 
 [package]
 name = "hypixel_api"
-version = "1.4.0" # includes db/singleflight updates.
+version = "1.4.1" # includes db/singleflight updates.
 edition = "2024"
 
 [dependencies]
 actix-web = { version = "4.14.0" }
-moka = { version = "0.12.15", features = ["future"] }
 reqwest = { version = "0.13.4", features = ["json"] }
 serde_json = "1.0.150"
 actix-governor = "0.10.0"
@@ -29,6 +28,7 @@ ltmdb = { path = "ltmdb" }
 single_flight = { path = "single_flight" }
 portable-atomic = "1.13.1"
 rapidhash_lite = { path = "rapidhash_lite" }
+pingora-memory-cache = "0.8.1"
 
 [profile.dev.package."*"]
 opt-level = 3

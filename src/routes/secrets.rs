@@ -1,11 +1,11 @@
 use std::{str::FromStr, sync::{LazyLock, atomic::Ordering}, time::Duration};
 
-use actix_web::{Responder, error::ErrorInternalServerError, get, web::{BytesMut, Data, Path}};
+use actix_web::{Responder, error::ErrorInternalServerError, get, web::{Bytes, BytesMut, Data, Path}};
 use serde_json::to_vec;
 use simd_json::{BorrowedValue, derived::ValueObjectAccess, to_borrowed_value};
 use uuid::Uuid;
 
-use crate::{cache::{cache_key::CacheKey, cache_router::{CacheRouter, Database}, memory::CacheEntry}, env_var, error::ProcessError, request_utils::{json_response, request}, routes::stats::{RateLimit, stats_from_headers}};
+use crate::{cache::{cache_key::CacheKey, cache_router::{CacheRouter, Database}}, env_var, error::ProcessError, request_utils::{json_response, request}, routes::stats::{RateLimit, stats_from_headers}};
 
 /// Cache time to live for secret queries in seconds. Secret queries do not query the database.
 pub static SECRETS_TTL_SECONDS: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs(env_var("SECRETS_TTL_SECONDS", 120)));
@@ -19,7 +19,7 @@ impl CacheKey for SecretsKey {
         self.0
     }
     
-    async fn get_or_insert(&self, _: &Database, rate_limit: &RateLimit) -> Result<CacheEntry, ProcessError> {
+    async fn get_or_insert(&self, _: &Database, rate_limit: &RateLimit) -> Result<(Bytes, Duration), ProcessError> {
         let res = request(self.key(), format!("https://api.hypixel.net/v2/player?uuid={}", self.uuid())).await?;
         if let Some((remaining, reset)) = stats_from_headers(res.headers()) {
             rate_limit.store(remaining, reset, Ordering::Relaxed);
@@ -28,7 +28,7 @@ impl CacheKey for SecretsKey {
         let mut bytes = BytesMut::from(res.bytes().await?);
         let json = to_borrowed_value(&mut bytes)?;
         let formatted = &find_secrets(&json).ok_or(ProcessError::internal("Could not find secrets."))?;
-        Ok(CacheEntry::from_vec(to_vec(formatted)?, *SECRETS_TTL_SECONDS))
+        Ok((to_vec(formatted)?.into(), *SECRETS_TTL_SECONDS))
     }
 }
 

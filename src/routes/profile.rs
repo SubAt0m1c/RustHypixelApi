@@ -1,9 +1,9 @@
 use std::{str::FromStr, sync::{LazyLock, atomic::Ordering}, time::{Duration, Instant}};
 
-use actix_web::{error::ErrorInternalServerError, get, web::{Data, Path}, Responder};
+use actix_web::{Responder, error::ErrorInternalServerError, get, web::{Bytes, Data, Path}};
 use uuid::Uuid;
 
-use crate::{cache::{cache_key::CacheKey, cache_router::{CacheRouter, Database}, compression::{compress, decompress}, memory::CacheEntry}, env_var, error::ProcessError, logging::{LogMessage, log}, request_utils::{json_response, request}, routes::stats::{RateLimit, stats_from_headers}};
+use crate::{cache::{cache_key::CacheKey, cache_router::{CacheRouter, Database}, compression::{compress, decompress}}, env_var, error::ProcessError, logging::{LogMessage, log}, request_utils::{json_response, request}, routes::stats::{RateLimit, stats_from_headers}};
 
 /// Database time to live for profile queries in seconds.
 pub static PROFILE_DB_TTL_SECONDS: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs(env_var("PROFILE_DB_TTL_SECONDS", 3600)));
@@ -19,7 +19,7 @@ impl CacheKey for ProfileKey {
         self.0
     }
  
-    async fn get_or_insert(&self, db: &Database, stats: &RateLimit) -> Result<CacheEntry, ProcessError> {
+    async fn get_or_insert(&self, db: &Database, stats: &RateLimit) -> Result<(Bytes, Duration), ProcessError> {
         let uuid_key = self.key();
         let now = Instant::now();
         let bytes = db.read(uuid_key).await?;
@@ -29,7 +29,7 @@ impl CacheKey for ProfileKey {
             let decompressed = decompress(&db_data).map_err(|e| ProcessError::Database(e.to_string()))?;
             
             log(LogMessage::MessageAndUser { key: uuid_key, message: "DB Hit" });
-            return Ok(CacheEntry::from_vec(decompressed, *PROFILE_CACHE_TTL_SECONDS))
+            return Ok((decompressed.into(), *PROFILE_CACHE_TTL_SECONDS))
         }
 
         let res = request(uuid_key, format!("https://api.hypixel.net/v2/skyblock/profiles?uuid={}", self.uuid())).await?;
@@ -44,7 +44,7 @@ impl CacheKey for ProfileKey {
         db.insert(uuid_key, compressed, *PROFILE_DB_TTL_SECONDS).await?;
         log(LogMessage::TimeElapsed { elapsed: now.elapsed(), name: "DB write" });
         
-        Ok(CacheEntry::new(bytes, *PROFILE_CACHE_TTL_SECONDS))
+        Ok((bytes, *PROFILE_CACHE_TTL_SECONDS))
     }
 }
 
