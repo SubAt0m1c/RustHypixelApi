@@ -29,6 +29,7 @@ single_flight = { path = "single_flight" }
 portable-atomic = "1.13.1"
 rapidhash_lite = { path = "rapidhash_lite" }
 pingora-memory-cache = "0.8.1"
+simple_defer = { path = "simple_defer" }
 
 [profile.dev.package."*"]
 opt-level = 3

@@ -4,6 +4,7 @@ use actix_web::web::Bytes;
 use ltmdb::{ResultExt, Runtime};
 use pingora_memory_cache::MemoryCache;
 use rapidhash_lite::RandomHash;
+use simple_defer::{Deferred, defer};
 use single_flight::Group;
 use tokio::{spawn, task::spawn_blocking, time::{Instant, sleep}};
 
@@ -39,6 +40,8 @@ impl CacheRouter {
         if let (Some(entry), _) = self.cache.get(&k) {
             return Ok(entry);
         }
+
+        let drop_logs = defer(|| log(LogMessage::MessageAndUser { key: k, message: "Dropped while in single flight group" }));
         
         // singleflight coelesces the key.get_or_insert requests so we dont duplicate work on quick duplicate requests
         let res = self.group.work(&k, async move {
@@ -52,6 +55,8 @@ impl CacheRouter {
             Ok(data)
         }).await;
 
+        drop_logs.cancel();
+        
         res.map_err(|err| err.unwrap_or(ProcessError::InternalServer("Single Flight Leader failed!")))
     }
 }

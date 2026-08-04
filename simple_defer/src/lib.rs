@@ -10,7 +10,7 @@ pub fn defer<R, F: FnOnce() -> R>(deferred: F) -> impl Deferred {
     impl<R, F: FnOnce() -> R> Sealed for Deferrable<R, F> {}
     
     impl<R, F: FnOnce() -> R> Deferred for Deferrable<R, F> {
-        /// consumes the deferred closue without running it.
+        /// Consumes the deferred closue without running it.
         /// 
         /// Useful if you want to protect against panics or a future being dropped but also want to 
         /// manually handle the success path.
