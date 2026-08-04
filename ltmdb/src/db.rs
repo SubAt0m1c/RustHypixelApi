@@ -194,12 +194,12 @@ impl<RT: Runtime, S: BuildHasher + Default + Send + Sync + 'static> Database<RT,
         };
 
         let insert_future = {
-            let guard = self.maps.buckets.guard();
+            let bucket_map = self.maps.buckets.pin();
 
             let bucket = match new_bucket {
-                Some(bucket) => self.maps.buckets.get_or_insert(cache_id, bucket, &guard),
+                Some(bucket) => bucket_map.get_or_insert(cache_id, bucket),
                 #[allow(clippy::missing_panics_doc)] // this panic should never occur unless we add bucket removal.
-                None => self.maps.buckets.get(&cache_id, &guard).expect("new_bucket should be Some if buckets doesnt contain cache_id"),
+                None => bucket_map.get(&cache_id).expect("new_bucket should be Some if buckets doesnt contain cache_id"),
             };
             bucket.insert::<RT, S>(now, cache_id, entry, &self.maps, &self.queue_tx)
         };

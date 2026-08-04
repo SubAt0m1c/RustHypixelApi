@@ -9,8 +9,8 @@ use tokio::{spawn, task::spawn_blocking, time::{Instant, sleep}};
 
 use crate::{cache::{UuidKey, cache_key::CacheKey}, env_var, error::ProcessError, logging::{LogMessage, log}, routes::stats::RateLimit};
 
+// pingora_memory_cache::MemoryCache doesnt give us access to TinyUFO's weight handling, instead being sized by number of entries.
 static CACHE_SIZE: LazyLock<usize> = LazyLock::new(|| env_var("CACHE_SIZE", 256));
-
 
 pub type Database = ltmdb::Database<TokioRT, RandomHash>;
 
@@ -36,14 +36,14 @@ impl CacheRouter {
 
         // we check the cache outside the singleflight group, since it's much more expensive to start that work 
         // just to check the cache if its already there and doesn't need suppression
-        if let (Some(entry), _status) = self.cache.get(&k) {
+        if let (Some(entry), _) = self.cache.get(&k) {
             return Ok(entry);
         }
         
         // singleflight coelesces the key.get_or_insert requests so we dont duplicate work on quick duplicate requests
         let res = self.group.work(&k, async move {
             // we check again here since it may have been added between the prior call and when the group started the work.
-            if let (Some(entry), _status) = self.cache.get(&k) { 
+            if let (Some(entry), _) = self.cache.get(&k) { 
                 return Ok(entry);
             }
             

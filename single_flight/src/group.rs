@@ -1,6 +1,7 @@
 use std::{borrow::Borrow, fmt::{self, Debug}, hash::{BuildHasher, Hash, RandomState}, marker::PhantomData};
 
 use papaya::HashMap;
+use simple_defer::Deferred;
 
 use crate::{error::GroupWorkError, types::{Follower, InFlight, MapFlight, Next, State}};
 
@@ -79,10 +80,10 @@ where
         F: Future<Output = Result<T, E>> + Send,
         K: Borrow<Q>,
     {   
-        // The lifetime of this InFlight holds the flight alive in the map. If we are the last remaining flight, 
-        // we will drop it AND remove it from the map.
         let current_flight = InFlight::get_flight(key, &self.map);
-
+        // This ensures the flight is removed from the map if we are the last entry and finish as a follower or leader with panic/cancel and no followers.
+        let map_remove = current_flight.defered_remove(key, &self.map);
+        
         'next_state: loop {
             match current_flight.next(fut) {
                 Next::Lead(leader) => {
@@ -92,6 +93,7 @@ where
                     // before the flight is removed can happily take that non-stale success out. Late retryers own their own flight, and wont need
                     // it to remain in the map.
                     let _ = self.map.pin().remove_if(key, |_, existing| existing.same_flight(&current_flight)); 
+                    map_remove.cancel(); // we already removed it from the map, we dont need to try again.
                     return result.map_err(GroupWorkError::Error)
                 }
                 Next::Follow(follower) => {
@@ -102,7 +104,10 @@ where
                             State::Uninit | State::Running => {} // exit the match to await so we dont await while holding the state guard.
                             State::LeaderDropped => continue 'next_state,
                             State::LeaderFailed => return Err(GroupWorkError::LeaderFailed),
-                            State::Success(val) => return Ok(val.clone()),
+                            State::Success(val) => {
+                                map_remove.cancel(); // The leader is set to remove it from the map.
+                                return Ok(val.clone())
+                            }
                         }
                         wait_for_leader.await;                        
                     }

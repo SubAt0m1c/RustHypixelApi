@@ -1,9 +1,8 @@
-use std::{env, fmt::{Debug, Display}, str::FromStr};
+use std::{env, fmt::{Debug, Display}, str::FromStr, sync::OnceLock};
 
 use actix_governor::{Governor, GovernorConfigBuilder};
 use actix_web::{App, HttpServer, middleware::from_fn, web::Data};
 use mimalloc::MiMalloc;
-use tokio::sync::OnceCell;
 
 use crate::{cache::cache_router::CacheRouter, key_extractor::RealKeyExtractor, routes::{profile::profile, secrets::secrets, stats::{RateLimit, statistics}}};
 
@@ -18,7 +17,7 @@ mod error;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-pub static API_KEY: OnceCell<String> = OnceCell::const_new();
+pub static API_KEY: OnceLock<String> = OnceLock::new();
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {

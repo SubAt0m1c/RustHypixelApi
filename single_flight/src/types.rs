@@ -4,6 +4,7 @@ use cusp::{Compute, Cell, Operation, PinnedCell};
 use event_listener::{Event, EventListener};
 use papaya::{HashMap, LocalGuard};
 use pin_project_lite::pin_project;
+use simple_defer::{Deferred, defer};
 
 use crate::larc::{Darc, Larc};
 
@@ -16,34 +17,22 @@ impl<T> MapFlight<T> {
         Self { flight }
     }
 
-    pub fn same_flight<Q, K, S>(&self, map_flight: &InFlight<'_, Q, K, T, S>) -> bool
-    where 
-        Q: Hash + Eq + ?Sized + Send + Sync + ToOwned<Owned = K>,
-        K: Hash + Eq + Borrow<Q>,
-        S: BuildHasher,
-    {
+    pub fn same_flight(&self, map_flight: &InFlight<T>) -> bool {
         self.flight.ptr_eq(&map_flight.flight)
     }
 }
 
-pub(crate) struct InFlight<'a, Q, K, T, S> 
-where
-    Q: Hash + Eq + ?Sized + Send + Sync + ToOwned<Owned = K>,
-    K: Hash + Eq + Borrow<Q>,
-    S: BuildHasher,
- {
+pub(crate) struct InFlight<T> {
     flight: Larc<Flight<T>>,
-    key: &'a Q,
-    map: &'a HashMap<K, MapFlight<T>, S>,
 }
 
-impl<'a, Q, K, T, S>  InFlight<'a, Q, K, T, S>
-where
-    Q: Hash + Eq + ?Sized + Send + Sync + ToOwned<Owned = K>,
-    K: Hash + Eq + Borrow<Q>,
-    S: BuildHasher,
-{
-    pub fn get_flight(key: &'a Q, map: &'a HashMap<K, MapFlight<T>, S>) -> Self {
+impl<T> InFlight<T> {
+    pub fn get_flight<'a, Q, K, S>(key: &'a Q, map: &'a HashMap<K, MapFlight<T>, S>) -> Self 
+    where
+        Q: Hash + Eq + ?Sized + Send + Sync + ToOwned<Owned = K>,
+        K: Hash + Eq + Borrow<Q>,
+        S: BuildHasher,
+    {
         let mut next_flight = None; // This lets us move values out of the compute closure while using an insert operation.
         let pinned_map = map.pin();
 
@@ -68,9 +57,23 @@ where
         });
 
         let flight = next_flight.expect("Shouldve set next_flight to Some");
-        Self { flight, key, map }
+        Self { flight }
     }
-
+    
+    pub fn defered_remove<'a, Q, K, S>(&self, key: &'a Q, map: &'a HashMap<K, MapFlight<T>, S>) -> impl Deferred 
+    where
+        Q: Hash + Eq + ?Sized + Send + Sync + ToOwned<Owned = K>,
+        K: Hash + Eq + Borrow<Q>,
+        S: BuildHasher,
+    {
+        defer(|| {
+            if Larc::try_lock(&self.flight) {
+                let _ = map.pin().remove_if(key, |_, flight| {
+                    flight.same_flight(self)
+                });
+            }
+        })
+    }
     /// Attempts to transition the flight to the next state.
     /// 
     /// Returns an enum signifying the state transition and what to do next.
@@ -95,22 +98,6 @@ where
                 Next::Lead(Leader::new(fut, &self.flight))
             }
             Compute::Aborted { value, ..} => value
-        }
-    }
-}
-
-impl<Q, K, T, S> Drop for InFlight<'_, Q, K, T, S>
-where
-    Q: Hash + Eq + ?Sized + Send + Sync + ToOwned<Owned = K>,
-    K: Hash + Eq + Borrow<Q>,
-    S: BuildHasher, 
-{
-    fn drop(&mut self) {
-        // we can remove this flight from the map if we are the last remaining flight.
-        if Larc::try_lock(&self.flight) {
-            let _ = self.map.pin().remove_if(self.key, |_, flight| {
-                flight.same_flight(self)
-            });
         }
     }
 }

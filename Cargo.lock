@@ -2261,7 +2261,7 @@ version = "0.1.0"
 
 [[package]]
 name = "single_flight"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "cusp",
  "event-listener",
@@ -2269,6 +2269,7 @@ dependencies = [
  "futures",
  "papaya",
  "pin-project-lite",
+ "simple_defer",
  "tokio",
 ]
 
