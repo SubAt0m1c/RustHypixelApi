@@ -103,7 +103,10 @@ where
                         match Follower::<T>::current_state(&follower, &follower.guard_state()) {
                             State::Uninit | State::Running => {} // exit the match to await so we dont await while holding the state guard.
                             State::LeaderDropped => continue 'next_state,
-                            State::LeaderFailed => return Err(GroupWorkError::LeaderFailed),
+                            State::LeaderFailed => {
+                                map_remove.cancel(); // The leader is set to remove it from the map.
+                                return Err(GroupWorkError::LeaderFailed)
+                            }
                             State::Success(val) => {
                                 map_remove.cancel(); // The leader is set to remove it from the map.
                                 return Ok(val.clone())

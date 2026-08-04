@@ -18,7 +18,7 @@ pub use seize::OwnedGuard as OwnedGuard;
 
 // global collector because it reduces cell size (an owned collector is 960 bytes) and more often than not you don't need unique collector ownership. 
 // Seize bounds memory usage well, so the benefits of freeing everything on drop are minimal. Cells especially may
-// hardly have any live references and guards to need freeing on drop.
+// hardly have any live references and guards to need freeing immedietly on drop.
 
 /// The default global collector for cusp cells.
 #[derive(Default, Clone, Copy)]
